@@ -19,14 +19,15 @@ makeElf := elf.makeElf
 
 ElfPath := './b.out'
 
-elfFile := makeElf(
-	cat([
-		transform('b8 01 00 00 00') `` mov eax, 0x1
-		transform('bb 2a 00 00 00') `` mov ebx, 0x2a
-		transform('cd 80') `` int 0x80
-	], '')
-	'Hello, World!' + char(10) + char(0)
-)
+Instructions := cat([
+	transform('b8 01 00 00 00') `` mov eax, 0x1
+	transform('bb 2a 00 00 00') `` mov ebx, 0x2a
+	transform('cd 80') `` int 0x80 (32-bit syscall ABI)
+], '')
+
+ROData := 'Hello, World!' + char(10) + char(0)
+
+elfFile := makeElf(Instructions, ROData)
 
 ` write binary to disk `
 writeFile(ElfPath, elfFile, res => res :: {

@@ -26,6 +26,10 @@ toBytes := (n, minBytes) => (sub := (acc, n) => (
 	}
 ))('', n)
 
+
+` a byte string of N null bytes `
+zeroes := n => toBytes(0, n)
+
 ` 'xx xx xx xx' -> byte string `
 transform := hexs => cat(map(split(hexs, ' '), code => char(xeh(code))), '')
 

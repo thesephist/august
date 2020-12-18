@@ -11,7 +11,9 @@ map := std.map
 
 bytes := load('../lib/bytes')
 
+padEndNull := bytes.padEndNull
 toBytes := bytes.toBytes
+zeroes := bytes.zeroes
 transform := bytes.transform
 
 SectionFlag := {
@@ -61,8 +63,8 @@ makeElf := (text, rodata) => (
 	StrTabSection := {
 		name: toBytes(14, 4)
 		type: toBytes(3, 4) `` STRTAB
-		flags: toBytes(0, 8)
-		addr: toBytes(0, 8)
+		flags: zeroes(8)
+		addr: zeroes(8)
 		offset: toBytes(4096 + 12, 8)
 		body: cat([
 			'.text' + char(0)
@@ -115,10 +117,10 @@ makeElf := (text, rodata) => (
 			body: sec.body
 			offset: toBytes(offsetSofar.0, 8)
 			size: toBytes(len(sec.body), 8)
-			link: toBytes(0, 4)
-			info: toBytes(0, 4)
+			link: zeroes(4)
+			info: zeroes(4)
 			align: toBytes(16, 8)
-			entsize: toBytes(0, 8)
+			entsize: zeroes(8)
 		}
 		offsetSofar.0 := offsetSofar.0 + len(sec.body)
 		meta
@@ -139,7 +141,7 @@ makeElf := (text, rodata) => (
 		], '')
 	)), '')
 
-	` assemble header `
+	` assemble ELF header `
 
 	ElfHeaderSize := 64
 	ElfHeader := cat([
@@ -167,7 +169,7 @@ makeElf := (text, rodata) => (
 		toBytes(4096 + len(SectionBodies), 8)
 
 		`` padding (?)
-		toBytes(0, 4)
+		zeroes(4)
 
 		`` ELF HEADER size (0x40)
 		toBytes(ElfHeaderSize, 2)
@@ -187,10 +189,10 @@ makeElf := (text, rodata) => (
 	], '')
 
 	` generate binary file `
-	` NOTE: we pad out to page boundary for executable parts of the ELF `
-	elfFile := ElfHeader +
-		ProgHeaders +
-		toBytes(0, 4096 - len(ElfHeader + ProgHeaders)) +
+	` NOTE: we pad out to page boundary for executable parts of the ELF.
+		this assumption is baked into other offset calculations above. Grep for
+		"4096" to find all of them. `
+	elfFile := padEndNull(ElfHeader + ProgHeaders, 4096) +
 		SectionBodies +
 		SectionHeaders
 )
