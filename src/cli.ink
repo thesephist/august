@@ -5,13 +5,28 @@ str := load('../vendor/str')
 
 log := std.log
 f := std.format
+cat := std.cat
 writeFile := std.writeFile
 
-elf := load('elf')
+bytes := load('../lib/bytes')
 
-elfFile := elf.elfFile
+transform := bytes.transform
+
+elf := load('elf')
+asm := load('asm')
+
+makeElf := elf.makeElf
 
 ElfPath := './b.out'
+
+elfFile := makeElf(
+	cat([
+		transform('b8 01 00 00 00') `` mov eax, 0x1
+		transform('bb 2a 00 00 00') `` mov ebx, 0x2a
+		transform('cd 80') `` int 0x80
+	], '')
+	'Hello, World!' + char(10) + char(0)
+)
 
 ` write binary to disk `
 writeFile(ElfPath, elfFile, res => res :: {

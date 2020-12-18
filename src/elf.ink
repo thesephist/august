@@ -1,157 +1,196 @@
 `` ELF file format library
+`` c.f. https://man7.org/linux/man-pages/man5/elf.5.html
 
 std := load('../vendor/std')
 str := load('../vendor/str')
 
 log := std.log
 f := std.format
-xeh := std.xeh
 cat := std.cat
 map := std.map
-split := str.split
 
-Null := char(0)
-ExecStartAddr := 4198400
+bytes := load('../lib/bytes')
 
-` 64-bit word of zeroes `
-ZWord := '00 00 00 00 00 00 00 00'
-ZQWord := cat([ZWord, ZWord, ZWord, ZWord], ' ')
+toBytes := bytes.toBytes
+transform := bytes.transform
 
-` pad end of string with null bytes `
-padEndNull := (s, size) => len(s) < size :: {
-	true -> padEndNull(s + Null, size)
-	_ -> s
+SectionFlag := {
+	Null: 0
+	Write: 1
+	Alloc: 2
+	ExecInstr: 4
+	MaskProc: 8
 }
 
-` takes a number, formats it to a little-endian byte string of given min width
-	.e.g. 511 => '\xff \x01'`
-toBytes := (n, minBytes) => (sub := (acc, n) => (
-	acc := acc + char(n % 256)
-	rest := floor(n / 256) :: {
-		0 -> padEndNull(acc, minBytes)
-		_ -> sub(acc, rest)
+ProgType := {
+	Null: 0
+	Load: 1
+	Dynamic: 2
+	Interp: 4
+	Note: 8
+	ShLib: 16
+	PHdr: 32
+}
+
+ProgFlag := {
+	Execute: 1
+	Write: 2
+	Read: 4
+}
+
+ExecStartAddr := 4198400
+ROStartAddr := 7032832
+
+makeElf := (text, rodata) => (
+	TextSection := {
+		name: toBytes(0, 4)
+		type: toBytes(1, 4) `` PROGBITS
+		flags: toBytes(SectionFlag.Alloc | SectionFlag.ExecInstr, 8)
+		addr: toBytes(ExecStartAddr, 8)
+		offset: toBytes(4096, 8)
+		body: text
 	}
-))('', n)
+	RODataSection := {
+		name: toBytes(6, 4)
+		type: toBytes(1, 4) `` PROGBITS
+		flags: toBytes(SectionFlag.Alloc, 8)
+		addr: toBytes(ROStartAddr, 8)
+		offset: toBytes(4096 + 12, 8)
+		body: rodata
+	}
+	StrTabSection := {
+		name: toBytes(14, 4)
+		type: toBytes(3, 4) `` STRTAB
+		flags: toBytes(0, 8)
+		addr: toBytes(0, 8)
+		offset: toBytes(4096 + 12, 8)
+		body: cat([
+			'.text' + char(0)
+			'.rodata' + char(0)
+			'.shstrtab' + char(0)
+		], '')
+	}
 
-` 'xx xx xx xx' -> byte string `
-transform := hexs => cat(map(split(hexs, ' '), code => char(xeh(code))), '')
+	TextProg := {
+		type: toBytes(ProgType.Load, 4)
+		flags: toBytes(ProgFlag.Read | ProgFlag.Execute, 4)
+		offset: toBytes(4096, 8)
+		addr: toBytes(ExecStartAddr, 8)
+		size: toBytes(len(text), 8)
+	}
+	RODataProg := {
+		type: toBytes(ProgType.Load, 4)
+		flags: toBytes(ProgFlag.Read | ProgFlag.Write, 4)
+		offset: toBytes(4096, 8) `` TODO: ELF segfaults with offset = 4K + len(text). Why?
+		addr: toBytes(ROStartAddr, 8)
+		size: toBytes(len(rodata), 8)
+	}
 
-ElfHeader := cat([
-	`` ELF format specifier
-	transform('7f') + 'ELF'
-	`` format (64-bit two's complement, little-endian)
-	transform('02 01')
-	`` version, always 1
-	transform('01 00 00 00')
-	`` OS/ABI (System V) version 0
-	transform('00 00 00 00 00 00')
-	`` ELF type (executable)
-	transform('02 00')
-	`` Machine type (amd64)
-	transform('3e 00')
-	`` version, always 1
-	transform('01 00 00 00')
+	` below: auto-generated ELF metadata `
 
-	`` execution start address (little-endian, 0x00401000 (default))
-	`` sizeof == word size
-	toBytes(ExecStartAddr, 8)
+	` assemble program headers`
 
-	`` PROGRAM HEADER offset (0x40)
-	`` sizeof == word size
-	toBytes(64, 8)
-	`` SECTION HEADER offset (0x1020)
-	`` sizeof == word size
-	toBytes(4128, 8)
+	Progs := [TextProg, RODataProg]
+	ProgHeaders := cat(map([TextProg, RODataProg], prog => cat([
+		prog.type
+		prog.flags
+		prog.offset
+		prog.addr `` virtual
+		prog.addr `` physical
+		prog.size `` on file
+		prog.size `` in mem
+		toBytes(16, 8)
+	], '')), '')
 
-	`` padding (?)
-	toBytes(0, 4)
+	` assemble sections and section metadata `
 
-	`` ELF HEADER size (0x40)
-	toBytes(64, 2)
+	Sections := [TextSection, RODataSection, StrTabSection]
+	offsetSofar := [4096]
+	SectionMetas := map(Sections, sec => (
+		meta := {
+			name: sec.name
+			type: sec.type
+			flags: sec.flags
+			addr: sec.addr
+			body: sec.body
+			offset: toBytes(offsetSofar.0, 8)
+			size: toBytes(len(sec.body), 8)
+			link: toBytes(0, 4)
+			info: toBytes(0, 4)
+			align: toBytes(16, 8)
+			entsize: toBytes(0, 8)
+		}
+		offsetSofar.0 := offsetSofar.0 + len(sec.body)
+		meta
+	))
+	SectionBodies := cat(map(SectionMetas, sec => sec.body), '')
+	SectionHeaders := cat(map(SectionMetas, sec => (
+		cat([
+			sec.name
+			sec.type
+			sec.flags
+			sec.addr
+			sec.offset
+			sec.size
+			sec.link
+			sec.info
+			sec.align
+			sec.entsize
+		], '')
+	)), '')
 
-	`` PROGRAM HEADER individual size
-	toBytes(56, 2)
-	`` PROGRAM HEADER count
-	toBytes(2, 2)
+	` assemble header `
 
-	`` SECTION HEADER individual size
-	toBytes(64, 2)
-	`` SECTION HEADER count
-	toBytes(3, 2)
+	ElfHeaderSize := 64
+	ElfHeader := cat([
+		`` ELF format specifier
+		transform('7f') + 'ELF'
+		`` format (64-bit two's complement, little-endian)
+		transform('02 01')
+		`` version, always 1
+		transform('01 00 00 00')
+		`` OS/ABI (System V) version 0
+		transform('00 00 00 00 00 00')
+		`` ELF type (executable)
+		transform('02 00')
+		`` Machine type (amd64)
+		transform('3e 00')
+		`` version, always 1
+		transform('01 00 00 00')
 
-	`` SECTION TABLE index
-	toBytes(2, 2)
-], '')
+		`` execution start address (little-endian, 0x00401000 (default))
+		toBytes(ExecStartAddr, 8)
 
-ElfBody := cat([
-	`` PROGRAM HEADER TABLE
+		`` PROGRAM HEADER offset
+		toBytes(ElfHeaderSize, 8)
+		`` SECTION HEADER offset
+		toBytes(4096 + len(SectionBodies), 8)
 
-	`` PROG: ??
-	transform('01 00 00 00 04 00 00 00') `` type: LOAD
-	transform('00 00 00 00 00 00 00 00') `` offset: 0
-	transform('00 00 40 00 00 00 00 00') `` virt addr 0x400000
-	transform('00 00 40 00 00 00 00 00') `` phys addr 0x400000
-	transform('b0 00 00 00 00 00 00 00') `` size on file: 0xb0
-	transform('b0 00 00 00 00 00 00 00') `` size in mem: 0xb0
-	transform('00 10 00 00 00 00 00 00') `` flags: Read / align: 0x10
+		`` padding (?)
+		toBytes(0, 4)
 
-	`` PROG: .text
-	transform('01 00 00 00 05 00 00 00') `` type: LOAD
-	transform('00 10 00 00 00 00 00 00') `` offset: 0
-	transform('00 10 40 00 00 00 00 00') `` virt addr 0x401000
-	transform('00 10 40 00 00 00 00 00') `` phys addr 0x401000
-	transform('0c 00 00 00 00 00 00 00') `` size on file: 0x0c
-	transform('0c 00 00 00 00 00 00 00') `` size in mem: 0x0c
-	transform('00 10 00 00 00 00 00 00') `` flags: Read, Execute / align: 0x10
+		`` ELF HEADER size (0x40)
+		toBytes(ElfHeaderSize, 2)
 
-	`` PADDING
-	toBytes(0, 2048)
-	toBytes(0, 1024)
-	toBytes(0, 512)
-	toBytes(0, 256)
-	toBytes(0, 80)
-], '')
+		`` PROGRAM HEADER individual size
+		toBytes(56, 2)
+		`` PROGRAM HEADER count
+		toBytes(len(Progs), 2)
 
-Sections := cat([
-	`` PROGRAM TEXT START
-	transform('b8 01 00 00 00') `` mov eax, 0x1
-	transform('bb 2a 00 00 00') `` mov ebx, 0x2a
-	transform('cd 80') `` int 0x80
+		`` SECTION HEADER individual size
+		toBytes(64, 2)
+		`` SECTION HEADER count
+		toBytes(len(Sections), 2)
 
-	`` SECTION: .shstrtab
-	Null `` SHT_NULL
-	'.shstrtab'
-	'.text'
-	toBytes(0, 4) `` padding
-], '')
+		`` SECTION TABLE index
+		toBytes(len(SectionMetas) - 1, 2)
+	], '')
 
-SectionHeaders := cat([
-	`` SECTION HEADER TABLE
-
-	`` SECTION SHT_NULL
-	toBytes(0, 64)
-
-	`` SECTION  .text
-	transform('0b 00 00 00 01 00 00 00') `` ??
-	toBytes(6, 8) `` type: PROGBITS
-	toBytes(ExecStartAddr, 8) `` address
-	toBytes(256, 8) `` offset
-	toBytes(12, 8) `` size
-	toBytes(0, 4) `` entsize
-	transform('10 00 00 00 00 00 00 00') `` flags, link, info
-	toBytes(0, 4) `` alignment?
-
-	`` SECTION .shstrtab
-	transform('01 00 00 00 03 00 00 00') `` ??
-	toBytes(0, 4) `` type: STRTAB
-	toBytes(0, 8) `` address
-	toBytes(4108, 8) `` offset
-	toBytes(11, 8) `` size
-	toBytes(0, 8) `` entsize
-	transform('01 00 00 00 00 00 00 00') `` flags, link, info
-	toBytes(0, 4) `` alignment?
-], '')
-
-` generate binary file `
-elfFile := ElfHeader + ElfBody + Sections + SectionHeaders
-
+	` generate binary file `
+	` NOTE: we pad out to page boundary for executable parts of the ELF `
+	elfFile := ElfHeader +
+		ProgHeaders +
+		toBytes(0, 4096 - len(ElfHeader + ProgHeaders)) +
+		SectionBodies +
+		SectionHeaders
+)
