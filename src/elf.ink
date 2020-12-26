@@ -50,6 +50,7 @@ makeElf := (text, rodata) => (
 		flags: toBytes(SectionFlag.Alloc | SectionFlag.ExecInstr, 8)
 		addr: toBytes(ExecStartAddr, 8)
 		offset: toBytes(4096, 8)
+		align: toBytes(16, 8)
 		body: text
 	}
 	RODataSection := {
@@ -57,7 +58,8 @@ makeElf := (text, rodata) => (
 		type: toBytes(1, 4) `` PROGBITS
 		flags: toBytes(SectionFlag.Alloc, 8)
 		addr: toBytes(ROStartAddr, 8)
-		offset: toBytes(4096 + 12, 8)
+		offset: toBytes(4096 + len(text), 8)
+		align: toBytes(1, 8)
 		body: rodata
 	}
 	StrTabSection := {
@@ -65,7 +67,8 @@ makeElf := (text, rodata) => (
 		type: toBytes(3, 4) `` STRTAB
 		flags: zeroes(8)
 		addr: zeroes(8)
-		offset: toBytes(4096 + 12, 8)
+		offset: toBytes(4096 + len(text) + len(rodata), 8)
+		align: toBytes(1, 8)
 		body: cat([
 			'.text' + char(0)
 			'.rodata' + char(0)
@@ -83,7 +86,7 @@ makeElf := (text, rodata) => (
 	RODataProg := {
 		type: toBytes(ProgType.Load, 4)
 		flags: toBytes(ProgFlag.Read | ProgFlag.Write, 4)
-		offset: toBytes(4096, 8) `` TODO: ELF segfaults with offset = 4K + len(text). Why?
+		offset: toBytes(4096, 8)
 		addr: toBytes(ROStartAddr, 8)
 		size: toBytes(len(rodata), 8)
 	}
@@ -101,7 +104,7 @@ makeElf := (text, rodata) => (
 		prog.addr `` physical
 		prog.size `` on file
 		prog.size `` in mem
-		toBytes(16, 8)
+		toBytes(4096, 8) `` alignment
 	], '')), '')
 
 	` assemble sections and section metadata `
@@ -119,7 +122,7 @@ makeElf := (text, rodata) => (
 			size: toBytes(len(sec.body), 8)
 			link: zeroes(4)
 			info: zeroes(4)
-			align: toBytes(16, 8)
+			align: sec.align
 			entsize: zeroes(8)
 		}
 		offsetSofar.0 := offsetSofar.0 + len(sec.body)
@@ -158,7 +161,7 @@ makeElf := (text, rodata) => (
 		`` Machine type (amd64)
 		transform('3e 00')
 		`` version, always 1
-		transform('01 00 00 00')
+		toBytes(1, 4)
 
 		`` execution start address (little-endian, 0x00401000 (default))
 		toBytes(ExecStartAddr, 8)
