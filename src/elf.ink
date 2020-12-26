@@ -44,8 +44,10 @@ ExecStartAddr := 4198400
 ROStartAddr := 7032832
 
 makeElf := (text, rodata) => (
+	SectionNames := ['', '.text', '.rodata', '.shstrtab']
+
 	TextSection := {
-		name: toBytes(0, 4)
+		name: toBytes(1, 4)
 		type: toBytes(1, 4) `` PROGBITS
 		flags: toBytes(SectionFlag.Alloc | SectionFlag.ExecInstr, 8)
 		addr: toBytes(ExecStartAddr, 8)
@@ -54,7 +56,7 @@ makeElf := (text, rodata) => (
 		body: text
 	}
 	RODataSection := {
-		name: toBytes(6, 4)
+		name: toBytes(7, 4)
 		type: toBytes(1, 4) `` PROGBITS
 		flags: toBytes(SectionFlag.Alloc, 8)
 		addr: toBytes(ROStartAddr, 8)
@@ -63,17 +65,13 @@ makeElf := (text, rodata) => (
 		body: rodata
 	}
 	StrTabSection := {
-		name: toBytes(14, 4)
+		name: toBytes(15, 4)
 		type: toBytes(3, 4) `` STRTAB
 		flags: zeroes(8)
 		addr: zeroes(8)
 		offset: toBytes(4096 + len(text) + len(rodata), 8)
 		align: toBytes(1, 8)
-		body: cat([
-			'.text' + char(0)
-			'.rodata' + char(0)
-			'.shstrtab' + char(0)
-		], '')
+		body: cat(map(SectionNames, name => name + char(0)), '')
 	}
 
 	TextProg := {
@@ -129,7 +127,7 @@ makeElf := (text, rodata) => (
 		meta
 	))
 	SectionBodies := cat(map(SectionMetas, sec => sec.body), '')
-	SectionHeaders := cat(map(SectionMetas, sec => (
+	SectionHeaders := zeroes(64) + cat(map(SectionMetas, sec => (
 		cat([
 			sec.name
 			sec.type
@@ -185,10 +183,10 @@ makeElf := (text, rodata) => (
 		`` SECTION HEADER individual size
 		toBytes(64, 2)
 		`` SECTION HEADER count
-		toBytes(len(Sections), 2)
+		toBytes(len(Sections) + 1, 2)
 
 		`` SECTION TABLE index
-		toBytes(len(SectionMetas) - 1, 2)
+		toBytes(len(SectionMetas), 2)
 	], '')
 
 	` generate binary file `

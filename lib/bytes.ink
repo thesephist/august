@@ -9,10 +9,17 @@ map := std.map
 split := str.split
 
 Null := char(0)
+FF := char(255)
 
 ` pad end of string with null bytes `
 padEndNull := (s, size) => len(s) < size :: {
 	true -> padEndNull(s + Null, size)
+	_ -> s
+}
+
+` pad end of string with 0xFF bytes `
+padEndFF := (s, size) => len(s) < size :: {
+	true -> padEndFF(s + FF, size)
 	_ -> s
 }
 
@@ -21,7 +28,10 @@ padEndNull := (s, size) => len(s) < size :: {
 toBytes := (n, minBytes) => (sub := (acc, n) => (
 	acc := acc + char(n % 256)
 	rest := floor(n / 256) :: {
-		0 -> padEndNull(acc, minBytes)
+		0 -> n < 0 :: {
+			true -> padEndFF(acc, minBytes)
+			false -> padEndNull(acc, minBytes)
+		}
 		_ -> sub(acc, rest)
 	}
 ))('', n)
