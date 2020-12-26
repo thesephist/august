@@ -37,8 +37,23 @@ The content of text and rodata sections can be provided to the ELF library, whic
 The ELF file format is quite well documented, especially in source bases of various linkers, assemblers, and kernels, but the available reference material for _implementing_ an ELF linker is not...what you would call super accessible. In the process of building August, I've found the following references particularly helpful.
 
 - [`man elf` on Linux](https://man7.org/linux/man-pages/man5/elf.5.html) and the `elf` header file in the kernel sources, which provide the canonical reference for implementations of ELF files
-- [A Whirlwind Tutorial on Creating Really Teensy ELF Executables for Linux](http://www.muppetlabs.com/~breadbox/software/tiny/teensy.html), which breaks down the ELF format for executable files at a high evel
+- [A Whirlwind Tutorial on Creating Really Teensy ELF Executables for Linux](http://www.muppetlabs.com/~breadbox/software/tiny/teensy.html), which breaks down the ELF format for executable files at a high level
 - [LWN's write-up of the Linux kernel's view of ELF executables](https://lwn.net/Articles/631631/), with another breakdown of ELF executables
 - [Solaris's documentation on ELF object files](https://docs.oracle.com/cd/E53394_01/html/E54813/chapter6-93046.html#scrolltoc), a good in-depth reference
 - [Notes on the ELF specification](http://www.muppetlabs.com/~breadbox/software/ELF.txt), which is long but very, very comprehensive, occasionally useful for studying edge cases
+
+In writing an x86/x64 assembler, the following were especially helpful to get me up to speed.
+
+- [The x86asm.net ISA reference](http://ref.x86asm.net/coder64.html), which is comprehensive enough for a toy assembler and easy to navigate once you get used to the compact notation
+- [Encoding x86 Instructions](http://www.cs.loyola.edu/~binkley/371/Encoding_Real_x86_Instructions.html), which was a helpful guide to understanding how x86 and x64 instructions are encoded
+- The [x64 cheat sheet](http://cs.brown.edu/courses/cs033/docs/guides/x64_cheatsheet.pdf) for a handy list of the core x86/x64 instruction set
+
+## Development
+
+To work on August, you obviously need [Ink](https://dotink.co/) installed. [Inkfmt](https://github.com/thesephist/inkfmt) is also useful for auto-formatting code, which you can run with `make format` or `make f`.
+
+When I work on August (especially the assembler), I usually have two other panes open, running:
+
+- `ls src/*.ink | entr -cr make` so every file change assembles and runs a program to test
+- `ls ./b.out | entr -cr objdump -d -Mintel ./b.out` so that every time the executable is re-compiled, I can see the disassembly of the executable and check it against the intended assmbly code.
 
