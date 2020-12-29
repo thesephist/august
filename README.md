@@ -1,6 +1,6 @@
 # August 🪓
 
-**August** is an assembler written from scratch in [Ink](https://dotink.co/) for me to learn about assemblers, linkers, and compiler backends. It currently aims to support assembling and statically linking ELF executables for ARM, RISC-V, and x86_64 architectures, though Mach-O support for ARM and x86_64 are under consideration. In the long term, August might also become a code generation backend for a compiler for some small subset of C written in Ink.
+**August** is an assembler written from scratch in [Ink](https://dotink.co/) for me to learn about assemblers, linkers, and compiler backends. It currently aims to support assembling and statically linking [ELF](https://en.wikipedia.org/wiki/Executable_and_Linkable_Format) executables for ARM, RISC-V, and x86_64 architectures, though Mach-O support for ARM and x86_64 are under consideration. In the long term, August might also become a code generation backend for a compiler for some small subset of C written in Ink.
 
 _August is ⚠️ under development ⚠️. Many parts of the system do not work at all yet._
 
@@ -16,12 +16,12 @@ Here's a transcript of a shell session that demonstrates what August can do toda
 $ cat test/asm/004.asm
 ; Hello World
 
-section .text	; implicit
+section .text
 
-mov eax 0x1		; write syscall
-mov edi 0x1		; stdout
+mov eax 0x1     ; write syscall
+mov edi 0x1     ; stdout
 mov esi msg     ; string to print
-mov edx len		; length
+mov edx len     ; length
 syscall
 
 mov eax 60      ; exit syscall
@@ -31,9 +31,9 @@ syscall
 section .rodata
 
 msg:
-	db "Hello, World!" 0xa
+    db "Hello, World!" 0xa
 len:
-	eq 14
+    eq 14
 ```
 
 Run the emitted program, which prints, "Hello, World!" and exits cleanly.
@@ -51,7 +51,7 @@ $ echo $?
 
 If we disassemble the generated executable, we find the assembly we began with.
 
-```
+```asm
 $ objdump -d ./hello-world
 
 ./hello-world:     file format elf64-x86-64
@@ -59,15 +59,15 @@ $ objdump -d ./hello-world
 Disassembly of section .text:
 
 0000000000401000 <.text>:
-  401000:	b8 01 00 00 00       	mov    $0x1,%eax
-  401005:	bf 01 00 00 00       	mov    $0x1,%edi
-  40100a:	be 00 50 6b 00       	mov    $0x6b5000,%esi
-  40100f:	ba 0e 00 00 00       	mov    $0xe,%edx
-  401014:	0f 05                	syscall
-  401016:	b8 3c 00 00 00       	mov    $0x3c,%eax
-  40101b:	bf 00 00 00 00       	mov    $0x0,%edi
-  401020:	0f 05                	syscall
-	...
+  401000:    b8 01 00 00 00           mov    $0x1,%eax
+  401005:    bf 01 00 00 00           mov    $0x1,%edi
+  40100a:    be 00 50 6b 00           mov    $0x6b5000,%esi
+  40100f:    ba 0e 00 00 00           mov    $0xe,%edx
+  401014:    0f 05                    syscall
+  401016:    b8 3c 00 00 00           mov    $0x3c,%eax
+  40101b:    bf 00 00 00 00           mov    $0x0,%edi
+  401020:    0f 05                    syscall
+    ...
 ```
 
 ### Assembler
@@ -85,6 +85,8 @@ August uses a library for constructing ELF executable files located at [`./src/e
 - `.shstrtab` containing section headers
 
 The content of `.text` and `.rodata` sections can be provided to the ELF library, which will return a fully linked ELF binary as the result.
+
+_more to come._
 
 ## References and further reading
 
