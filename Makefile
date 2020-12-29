@@ -2,7 +2,7 @@ all: run
 
 # generate a dummy executable and run
 run:
-	./src/cli.ink; ./b.out; echo $$?
+	./src/cli.ink ./test/asm/000.asm ./b.out; ./b.out; echo $$?
 
 # run all tests under test/
 check: run

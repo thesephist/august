@@ -24,10 +24,13 @@ filter := std.filter
 every := std.every
 some := std.some
 digit? := str.digit?
+contains? := str.contains?
+index := str.index
 split := str.split
 trimSuffix := str.trimSuffix
 trim := str.trim
 hasPrefix? := str.hasPrefix?
+hasSuffix? := str.hasSuffix?
 
 bytes := load('../lib/bytes')
 
@@ -141,8 +144,14 @@ encodeInst := inst => append([inst.name], inst.args) :: {
 
 assemble := prog => (
 	lines := split(prog, Newline)
+
+	` strip comments `
+	lines := map(lines, s => contains?(s, ';') :: {
+		true -> slice(s, 0, index(s, ';'))
+		_ -> s
+	})
 	lines := map(lines, s => trim(trim(s, ' '), Tab))
-	lines := filter(lines, s => len(s) > 0 & ~hasPrefix?(s, ';'))
+	lines := filter(lines, s => len(s) > 0)
 
 	` parse and translate text code into instruction seq `
 	insts := map(lines, line => (
@@ -165,7 +174,12 @@ assemble := prog => (
 
 	` emit generated code `
 	some(map(mCode, x => x = ())) :: {
-		false -> cat(mCode, '')
+		false -> (
+			Instructions := cat(mCode, '')
+			ROData := ''
+
+			[Instructions, ROData]
+		)
 		_ -> (
 			log('Assembly error, exiting.')
 			()
