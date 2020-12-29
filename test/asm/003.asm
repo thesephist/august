@@ -1,22 +1,19 @@
-; Hello World
+; exit code 42, with more instructions
 
-section .text ; implicit
+; mov eax 1
+xor eax eax
+add eax -1
+dec eax
+inc eax
+neg eax
 
-_start:
-	mov eax 0x1		; write syscall
-	mov edi 0x1		; stdout
-	mov esi msg
-	mov edx len		; length
-	syscall
+; mov ebx 42
+mov ecx 45
+sub ecx 2
+sub ecx eax
+xor ebx ebx
+add ebx ecx
 
-	mov eax 60
-	mov edi 0
-	syscall
-
-section .rodata
-
-msg:
-	db "Hello, World!" 0xa
-len:
-	eq 14
+; syscall
+int 0x80
 

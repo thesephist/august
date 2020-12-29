@@ -4,15 +4,8 @@ section .text	; implicit
 
 mov eax 0x1		; write syscall
 mov edi 0x1		; stdout
-mov esi msg_a
-mov edx len_a	; length
-syscall
-
-xor eax eax
-inc eax
-mov edi eax
-mov esi msg_b
-mov edx len_b	; length
+mov esi msg
+mov edx len		; length
 syscall
 
 mov eax 60
@@ -21,13 +14,8 @@ syscall
 
 section .rodata
 
-msg_a:
+msg:
 	db "Hello, World!" 0xa
-len_a:
+len:
 	eq 14
-
-msg_b:
-	db "Goodbye!" 10
-len_b:
-	eq 9
 
