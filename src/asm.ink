@@ -7,8 +7,6 @@
   x64 assembly reference:
 	- http://cs.brown.edu/courses/cs033/docs/guides/x64_cheatsheet.pdf `
 
-asm := load('asm')
-
 std := load('../vendor/std')
 str := load('../vendor/str')
 
@@ -20,13 +18,17 @@ slice := std.slice
 append := std.append
 map := std.map
 each := std.each
+reduce := std.reduce
 filter := std.filter
 every := std.every
 some := std.some
+
 digit? := str.digit?
 contains? := str.contains?
 index := str.index
 split := str.split
+replace := str.replace
+trimPrefix := str.trimPrefix
 trimSuffix := str.trimSuffix
 trim := str.trim
 hasPrefix? := str.hasPrefix?
@@ -37,11 +39,15 @@ bytes := load('../lib/bytes')
 toBytes := bytes.toBytes
 transform := bytes.transform
 
+elf := load('elf')
+
+ROStartAddr := elf.ROStartAddr
+
 Newline := char(10)
 Tab := char(9)
 
 number? := s => every(map(s, c => digit?(c) | c = '-'))
-reg? := s => ~(type(s) = 'number')
+failWith := msg => (log(msg), ())
 
 instString := inst => cat(map(append([inst.name], inst.args), string), ' ')
 
@@ -85,6 +91,8 @@ encodeReg := reg => reg :: {
 	'bh' -> 7
 
 	() -> 0
+
+	` if immediate, just return the immediate `
 	_ -> reg
 }
 
@@ -98,50 +106,64 @@ encodeRM := (reg, rm) => (
 	char(mod + encodeReg(reg) * 8 + encodeReg(rm))
 )
 
-failWith := msg => (log(msg), ())
-encodeInst := inst => append([inst.name], inst.args) :: {
-	['mov', _, _] -> map(inst.args, type) :: {
-		['string', 'string'] -> transform('89') + encodeRM(inst.args.1, inst.args.0)
-		['string', 'number'] -> char(xeh('b8') + encodeReg(inst.args.0)) + toBytes(inst.args.1, 4)
-		_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
-	}
-	['inc', _] -> transform('ff') + encodeRM((), inst.args.0)
-	['dec', _] -> transform('ff') + encodeRM(1, inst.args.0)
-	['not', _] -> transform('f7') + encodeRM(2, inst.args.0)
-	['neg', _] -> transform('f7') + encodeRM(3, inst.args.0)
-	['add', _, _] -> map(inst.args, type) :: {
-		['string', 'string'] -> transform('01') + encodeRM(inst.args.1, inst.args.0)
-		['string', 'number'] -> transform('81') + encodeRM(0, inst.args.0) + toBytes(inst.args.1, 4)
-		_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
-	}
-	['or', _, _] -> map(inst.args, type) :: {
-		['string', 'string'] -> transform('09') + encodeRM(inst.args.1, inst.args.0)
-		['string', 'number'] -> transform('81') + encodeRM(1, inst.args.0) + toBytes(inst.args.1, 4)
-		_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
-	}
-	['and', _, _] -> map(inst.args, type) :: {
-		['string', 'string'] -> transform('21') + encodeRM(inst.args.1, inst.args.0)
-		['string', 'number'] -> transform('81') + encodeRM(4, inst.args.0) + toBytes(inst.args.1, 4)
-		_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
-	}
-	['sub', _, _] -> map(inst.args, type) :: {
-		['string', 'string'] -> transform('29') + encodeRM(inst.args.1, inst.args.0)
-		['string', 'number'] -> transform('81') + encodeRM(5, inst.args.0) + toBytes(inst.args.1, 4)
-		_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
-	}
-	['xor', _, _] -> map(inst.args, type) :: {
-		['string', 'string'] -> transform('31') + encodeRM(inst.args.1, inst.args.0)
-		['string', 'number'] -> transform('81') + encodeRM(6, inst.args.0) + toBytes(inst.args.1, 4)
-		_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
-	}
-	['int', _] -> transform('cd') + char(inst.args.0)
-	['syscall'] -> transform('0f 05')
-	_ -> (
-		log(f('Unknown instruction: {{0}}', [instString(inst)]))
-		()
-	)
-}
+encodeInst := (inst, labels) => (
+	` map any potential labels in arguments to their correct values `
+	args := map(inst.args, arg => labels.(arg) :: {
+		() -> arg
+		_ -> labels.(arg)
+	})
 
+	` TODO: when implementing labels in .text,
+		while encoding instructions, update a global table of label -> offset
+		in .text in which to update with a toBytes(label, 4), then go through
+		and update them in the generated machine code in a second pass. `
+
+	` emit correctly encoded instruction `
+	append([inst.name], args) :: {
+		['mov', _, _] -> map(args, type) :: {
+			['string', 'string'] -> transform('89') + encodeRM(args.1, args.0)
+			['string', 'number'] -> char(xeh('b8') + encodeReg(args.0)) + toBytes(args.1, 4)
+			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
+		}
+		['inc', _] -> transform('ff') + encodeRM((), args.0)
+		['dec', _] -> transform('ff') + encodeRM(1, args.0)
+		['not', _] -> transform('f7') + encodeRM(2, args.0)
+		['neg', _] -> transform('f7') + encodeRM(3, args.0)
+		['add', _, _] -> map(args, type) :: {
+			['string', 'string'] -> transform('01') + encodeRM(args.1, args.0)
+			['string', 'number'] -> transform('81') + encodeRM(0, args.0) + toBytes(args.1, 4)
+			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
+		}
+		['or', _, _] -> map(args, type) :: {
+			['string', 'string'] -> transform('09') + encodeRM(args.1, args.0)
+			['string', 'number'] -> transform('81') + encodeRM(1, args.0) + toBytes(args.1, 4)
+			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
+		}
+		['and', _, _] -> map(args, type) :: {
+			['string', 'string'] -> transform('21') + encodeRM(args.1, args.0)
+			['string', 'number'] -> transform('81') + encodeRM(4, args.0) + toBytes(args.1, 4)
+			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
+		}
+		['sub', _, _] -> map(args, type) :: {
+			['string', 'string'] -> transform('29') + encodeRM(args.1, args.0)
+			['string', 'number'] -> transform('81') + encodeRM(5, args.0) + toBytes(args.1, 4)
+			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
+		}
+		['xor', _, _] -> map(args, type) :: {
+			['string', 'string'] -> transform('31') + encodeRM(args.1, args.0)
+			['string', 'number'] -> transform('81') + encodeRM(6, args.0) + toBytes(args.1, 4)
+			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
+		}
+		['int', _] -> transform('cd') + char(args.0)
+		['syscall'] -> transform('0f 05')
+		_ -> (
+			log(f('Unknown instruction: {{0}}', [instString(inst)]))
+			()
+		)
+	}
+)
+
+` main assembly encoder function, text code => machine code byte string `
 assemble := prog => (
 	lines := split(prog, Newline)
 
@@ -153,8 +175,79 @@ assemble := prog => (
 	lines := map(lines, s => trim(trim(s, ' '), Tab))
 	lines := filter(lines, s => len(s) > 0)
 
+	` parse out section directives for .text / .rodata, which are the two supported `
+	sections := reduce(lines, (acc, line) => line :: {
+		'section .text' -> acc.cur := 'text'
+		'section .rodata' -> acc.cur := 'rodata'
+		_ -> hasPrefix?(line, 'section') :: {
+			true -> failWith(f('Unrecognized section: {{0}}', line))
+			_ -> (
+				curSec := acc.(acc.cur)
+				curSec.len(curSec) := line
+
+				acc
+			)
+		}
+	}, {cur: 'text', text: [], rodata: []})
+
+	` parse and generate rodata section data segments `
+	parseQuotedLine := line => (sub := (parsed, token, inQuote?, i) => line.(i) :: {
+		() -> filter(token :: {
+			'' -> parsed
+			_ -> parsed.len(parsed) := token
+		}, s => len(s) > 0)
+		'\\' -> inQuote? :: {
+			true -> sub(parsed, token + line.(i + 1), inQuote?, i + 2)
+			_ -> sub(parsed, token + line.(i), inQuote?, i + 1)
+		}
+		'"' -> inQuote? :: {
+			true -> sub(parsed.len(parsed) := token, '', ~inQuote?, i + 1)
+			_ -> sub(parsed.len(parsed) := token, '', ~inQuote?, i + 1)
+		}
+		' ' -> inQuote? :: {
+			true -> sub(parsed, token + line.(i), inQuote?, i + 1)
+			_ -> sub(parsed.len(parsed) := token, '', inQuote?, i + 1)
+		}
+		_ -> sub(parsed, token + line.(i), inQuote?, i + 1)
+	})([], '', false, 0)
+	decodeData := s => (
+		pcs := parseQuotedLine(s)
+		chunks := map(pcs, pc => [hasPrefix?(pc, '0x'), number?(pc)] :: {
+			[true, _] -> char(xeh(slice(pc, 2, len(pc))))
+			[_, true] -> char(number(pc))
+			_ -> replace(pc, '\\"', '"')
+		})
+		chunks :: {
+			() -> ()
+			_ -> cat(chunks, '')
+		}
+	)
+	segments := reduce(sections.rodata, (acc, line) => hasSuffix?(line, ':') :: {
+		true -> acc.cur := trimSuffix(line, ':')
+		_ -> split(line, ' ').0 :: {
+			'db' -> (
+				` mark offset into rodata section `
+				info := trimPrefix(line, 'db ')
+				acc.labels.(acc.cur) := ROStartAddr + len(acc.data)
+				acc.data := acc.data + decodeData(info)
+				acc
+			)
+			'eq' -> (
+				info := trimPrefix(line, 'eq ')
+				number?(info) :: {
+					true -> (
+						acc.labels.(acc.cur) := number(info)
+						acc
+					)
+					_ -> failWith('Could not decode data segment line: {{0}}', [line])
+				}
+			)
+			_ -> failWith(f('Could not decode data segment line: {{0}}', [line]))
+		}
+	}, {cur: (), labels: {}, data: ''})
+
 	` parse and translate text code into instruction seq `
-	insts := map(lines, line => (
+	insts := map(sections.text, line => (
 		pcs := map(split(line, ' '), s => trimSuffix(s, ','))
 		pcs := map(pcs, pc => hasPrefix?(pc, '0x') :: {
 			true -> xeh(slice(pc, 2, len(pc)))
@@ -170,16 +263,14 @@ assemble := prog => (
 	))
 
 	` generate machine code `
-	mCode := map(insts, encodeInst)
+	mCode := map(insts, inst => encodeInst(inst, segments.labels))
 
 	` emit generated code `
 	some(map(mCode, x => x = ())) :: {
-		false -> (
-			Instructions := cat(mCode, '')
-			ROData := ''
-
-			[Instructions, ROData]
-		)
+		false -> {
+			text: cat(mCode, '')
+			rodata: segments.data
+		}
 		_ -> (
 			log('Assembly error, exiting.')
 			()
