@@ -264,11 +264,26 @@ encodeInst := (inst, offset, labels, symbols, addReloc) => (
 		_ -> derefArg(arg, false)
 	})
 
+	` determine operand sizes `
+	regArgs := filter(args, a => type(a) = 'string')
+	reg? := len(regArgs) > 0
+	regSize := (reg? :: {
+		true -> argSize(regArgs.0)
+		_ -> 4 `` default 32-bit operands
+	})
+
+	memArgs := filter(args, a => type(a) = 'composite')
+	mem? := len(memArgs) > 0
+	memSize := (mem? :: {
+		true -> argSize(memArgs.0)
+		_ -> 8 `` default 64-bit memory operands on x64
+	})
+
 	` emit correctly encoded instruction `
-	append([instName], args) :: {
+	baseInst := (append([instName], args) :: {
 		['push', _] -> type(args.0) :: {
 			'string' -> char(xeh('50') + encodeReg(args.0))
-			'number' -> transform('68') + toBytes(args.0, 4)
+			'number' -> transform('68') + toBytes(args.0, regSize)
 			_ -> failWith(f('Unsupported instruction: {0}}', [instString(inst)]))
 		}
 		['pop', _] -> type(args.0) :: {
@@ -293,7 +308,10 @@ encodeInst := (inst, offset, labels, symbols, addReloc) => (
 				_ -> transform('89') + operands
 			}
 			['string', 'string'] -> transform('89') + encodeRM(args.1, args.0)
-			['string', 'number'] -> char(xeh('b8') + encodeReg(args.0)) + toBytes(args.1, 4)
+			['string', 'number'] -> regSize :: {
+				4 -> char(xeh('b8') + encodeReg(args.0)) + toBytes(args.1, 4)
+				_ -> transform('c7') + encodeRM(0, args.0) + toBytes(args.1, 4)
+			}
 			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
 		}
 		['add', _, _] -> map(args, type) :: {
@@ -332,6 +350,7 @@ encodeInst := (inst, offset, labels, symbols, addReloc) => (
 				_ -> transform('21') + operands
 			}
 			['string', 'string'] -> transform('21') + encodeRM(args.1, args.0)
+			['string', 'number'] -> transform('81') + encodeRM(4, args.0) + toBytes(args.1, 4)
 			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
 		}
 		['sub', _, _] -> map(args, type) :: {
@@ -344,6 +363,7 @@ encodeInst := (inst, offset, labels, symbols, addReloc) => (
 				_ -> transform('29') + operands
 			}
 			['string', 'string'] -> transform('29') + encodeRM(args.1, args.0)
+			['string', 'number'] -> transform('81') + encodeRM(5, args.0) + toBytes(args.1, 4)
 			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
 		}
 		['xor', _, _] -> map(args, type) :: {
@@ -356,6 +376,7 @@ encodeInst := (inst, offset, labels, symbols, addReloc) => (
 				_ -> transform('31') + operands
 			}
 			['string', 'string'] -> transform('31') + encodeRM(args.1, args.0)
+			['string', 'number'] -> transform('81') + encodeRM(6, args.0) + toBytes(args.1, 4)
 			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
 		}
 		['cmp', _, _] -> map(args, type) :: {
@@ -368,6 +389,7 @@ encodeInst := (inst, offset, labels, symbols, addReloc) => (
 				_ -> transform('39') + operands
 			}
 			['string', 'string'] -> transform('39') + encodeRM(args.1, args.0)
+			['string', 'number'] -> transform('81') + encodeRM(7, args.0) + toBytes(args.1, 4)
 			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
 		}
 		['call', _] -> transform('e8') + toBytes(args.0, 4)
@@ -383,7 +405,18 @@ encodeInst := (inst, offset, labels, symbols, addReloc) => (
 		['ret'] -> transform('c3')
 		['nop'] -> transform('90')
 		_ -> failWith(f('Unknown instruction: {{0}}', [instString(inst)]))
-	}
+	})
+
+	` add prefixes that modify operand/memory operand size `
+	baseInst := (regSize :: {
+		8 -> transform('48') + baseInst
+		2 -> transform('66') + baseInst
+		_ -> baseInst
+	})
+	baseInst := (memSize :: {
+		4 -> transform('67') + baseInst
+		_ -> baseInst
+	})
 )
 
 ` main assembly encoder function, text code => machine code byte string `

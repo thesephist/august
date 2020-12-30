@@ -17,12 +17,12 @@ assemble := asm.assemble
 
 `
 TODO:
-- [ ] Support for load/store from memory
-- [ ] Support different register sizes: hw, w, dw, qw
+- [ ] Tests for asm.ink comparing assemble(code) = transform('xx xx xx ...')
 - [ ] Symbol table for .text
 - [ ] Dynamic linking
 - [ ] Compile from C subset
 `
+
 AsmPath := args().2
 ElfPath := args().3
 
