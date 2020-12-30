@@ -19,6 +19,9 @@ exit:
 	mov edi 0
 	syscall
 
+	add eax [ebx 4 ecx 0x44]
+	add [ebx 4 ecx 0x44] eax
+
 print_hello:
 	mov rdx rsi ; 2nd arg
 	mov rsi rdi ; 1st arg

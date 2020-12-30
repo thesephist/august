@@ -76,7 +76,7 @@ decodeArg := arg => [hasPrefix?(arg, '0x'), number?(arg)] :: {
 	[_, true] -> number(arg)
 	_ -> [hasPrefix?(arg, '"'), contains?(arg, ' ')] :: {
 		[true, _] -> replace(trim(arg, '"'), '\\"', '"')
-		[_, true] -> split(arg, ' ')
+		[_, true] -> map(split(arg, ' '), decodeArg)
 		_ -> arg
 	}
 }
@@ -212,20 +212,17 @@ encodeSIB := (base, scale, index) => (
 	}
 )
 
-` general encoder for encoding a pair of operands of any type `
-encodeOperands := (a0, a1) => type(a1) = 'composite' :: {
-	true -> mem := a1 :: {
-		[_, _, _] -> sib := encodeSIB(mem.0, mem.1, mem.2) :: {
-			() -> ()
-			_ -> encodeSIBRM(0, a0) + sib
-		}
-		[_, _, _, _] -> sib := encodeSIB(mem.0, mem.1, mem.2) :: {
-			() -> ()
-			_ -> encodeSIBRM(128, a0) + encodeSIB(mem.0, mem.1, mem.2) + toBytes(mem.3, 4)
-		}
-		_ -> failWith(f('Unsupported memory location in instruction: {{0}}', [instString(inst)]))
+` encodeMem encodes a pair of register, memory reference operands `
+encodeMem := (reg, mem) => mem :: {
+	[_, _, _] -> sib := encodeSIB(mem.0, mem.1, mem.2) :: {
+		() -> ()
+		_ -> encodeSIBRM(0, reg) + sib
 	}
-	_ -> encodeRM(a1, a0)
+	[_, _, _, _] -> sib := encodeSIB(mem.0, mem.1, mem.2) :: {
+		() -> ()
+		_ -> encodeSIBRM(128, reg) + encodeSIB(mem.0, mem.1, mem.2) + toBytes(mem.3, 4)
+	}
+	_ -> failWith(f('Unsupported memory location in instruction: {{0}}', [instString(inst)]))
 }
 
 encodeInst := (inst, offset, labels, symbols, addReloc) => (
@@ -263,20 +260,12 @@ encodeInst := (inst, offset, labels, symbols, addReloc) => (
 		)
 	}
 	args := map(inst.args, arg => mem? := type(arg) = 'composite' :: {
-		true -> map(arg, derefArg)
-		_ -> derefArg(arg)
+		true -> map(arg, a => derefArg(a, true))
+		_ -> derefArg(arg, false)
 	})
 
 	` emit correctly encoded instruction `
 	append([instName], args) :: {
-		['mov', _, _] -> map(args, type) :: {
-			['string', 'string'] -> operands := encodeOperands(args.0, args.1) :: {
-				() -> ()
-				_ -> transform('89') + operands
-			}
-			['string', 'number'] -> char(xeh('b8') + encodeReg(args.0)) + toBytes(args.1, 4)
-			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
-		}
 		['push', _] -> type(args.0) :: {
 			'string' -> char(xeh('50') + encodeReg(args.0))
 			'number' -> transform('68') + toBytes(args.0, 4)
@@ -286,60 +275,99 @@ encodeInst := (inst, offset, labels, symbols, addReloc) => (
 			'string' -> transform('8f') + encodeRM(0, args.0)
 			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
 		}
-		['lea', _, _] -> operands := encodeOperands(args.0, args.1) :: {
+		['lea', _, _] -> operands := encodeMem(args.0, args.1) :: {
 			() -> ()
 			_ -> transform('8d') + operands
 		}
-		['inc', _] -> transform('ff') + encodeRM((), args.0)
+		['inc', _] -> transform('ff') + encodeRM(0, args.0)
 		['dec', _] -> transform('ff') + encodeRM(1, args.0)
 		['not', _] -> transform('f7') + encodeRM(2, args.0)
 		['neg', _] -> transform('f7') + encodeRM(3, args.0)
+		['mov', _, _] -> map(args, type) :: {
+			['string', 'composite'] -> operands := encodeMem(args.0, args.1) :: {
+				() -> ()
+				_ -> transform('8b') + operands
+			}
+			['composite', 'string'] -> operands := encodeMem(args.1, args.0) :: {
+				() -> ()
+				_ -> transform('89') + operands
+			}
+			['string', 'string'] -> transform('89') + encodeRM(args.1, args.0)
+			['string', 'number'] -> char(xeh('b8') + encodeReg(args.0)) + toBytes(args.1, 4)
+			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
+		}
 		['add', _, _] -> map(args, type) :: {
-			['string', 'composite'] -> operands := encodeOperands(args.0, args.1) :: {
+			['string', 'composite'] -> operands := encodeMem(args.0, args.1) :: {
+				() -> ()
+				_ -> transform('03') + operands
+			}
+			['composite', 'string'] -> operands := encodeMem(args.1, args.0) :: {
 				() -> ()
 				_ -> transform('01') + operands
 			}
+			['string', 'string'] -> transform('01') + encodeRM(args.1, args.0)
 			['string', 'number'] -> transform('81') + encodeRM(0, args.0) + toBytes(args.1, 4)
 			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
 		}
 		['or', _, _] -> map(args, type) :: {
-			['string', 'string'] -> operands := encodeOperands(args.0, args.1) :: {
+			['string', 'composite'] -> operands := encodeMem(args.0, args.1) :: {
+				() -> ()
+				_ -> transform('0b') + operands
+			}
+			['composite', 'string'] -> operands := encodeMem(args.1, args.0) :: {
 				() -> ()
 				_ -> transform('09') + operands
 			}
+			['string', 'string'] -> transform('09') + encodeRM(args.1, args.0)
 			['string', 'number'] -> transform('81') + encodeRM(1, args.0) + toBytes(args.1, 4)
 			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
 		}
 		['and', _, _] -> map(args, type) :: {
-			['string', 'string'] -> operands := encodeOperands(args.0, args.1) :: {
+			['string', 'composite'] -> operands := encodeMem(args.0, args.1) :: {
+				() -> ()
+				_ -> transform('23') + operands
+			}
+			['composite', 'string'] -> operands := encodeMem(args.1, args.0) :: {
 				() -> ()
 				_ -> transform('21') + operands
 			}
-			['string', 'number'] -> transform('81') + encodeRM(4, args.0) + toBytes(args.1, 4)
+			['string', 'string'] -> transform('21') + encodeRM(args.1, args.0)
 			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
 		}
 		['sub', _, _] -> map(args, type) :: {
-			['string', 'string'] -> operands := encodeOperands(args.0, args.1) :: {
+			['string', 'composite'] -> operands := encodeMem(args.0, args.1) :: {
+				() -> ()
+				_ -> transform('2b') + operands
+			}
+			['composite', 'string'] -> operands := encodeMem(args.1, args.0) :: {
 				() -> ()
 				_ -> transform('29') + operands
 			}
-			['string', 'number'] -> transform('81') + encodeRM(5, args.0) + toBytes(args.1, 4)
+			['string', 'string'] -> transform('29') + encodeRM(args.1, args.0)
 			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
 		}
 		['xor', _, _] -> map(args, type) :: {
-			['string', 'string'] -> operands := encodeOperands(args.0, args.1) :: {
+			['string', 'composite'] -> operands := encodeMem(args.0, args.1) :: {
+				() -> ()
+				_ -> transform('33') + operands
+			}
+			['composite', 'string'] -> operands := encodeMem(args.1, args.0) :: {
 				() -> ()
 				_ -> transform('31') + operands
 			}
-			['string', 'number'] -> transform('81') + encodeRM(6, args.0) + toBytes(args.1, 4)
+			['string', 'string'] -> transform('31') + encodeRM(args.1, args.0)
 			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
 		}
 		['cmp', _, _] -> map(args, type) :: {
-			['string', 'string'] -> operands := encodeOperands(args.0, args.1) :: {
+			['string', 'composite'] -> operands := encodeMem(args.0, args.1) :: {
+				() -> ()
+				_ -> transform('3b') + operands
+			}
+			['composite', 'string'] -> operands := encodeMem(args.1, args.0) :: {
 				() -> ()
 				_ -> transform('39') + operands
 			}
-			['string', 'number'] -> transform('81') + encodeRM(7, args.0) + toBytes(args.1, 4)
+			['string', 'string'] -> transform('39') + encodeRM(args.1, args.0)
 			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
 		}
 		['call', _] -> transform('e8') + toBytes(args.0, 4)
