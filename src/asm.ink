@@ -96,6 +96,15 @@ encodeReg := reg => reg :: {
 	_ -> reg
 }
 
+InstAliases := {
+	jz: 'je'
+	jnz: 'jne'
+	jnle: 'jg'
+	jnge: 'jl'
+	jnl: 'jge'
+	jng: 'jle'
+}
+
 ` encodeRM encodes an R/M byte in an x86 instruction.
 	At the moment, the mod bits are assumed to be register-only (11) and
 	register names are passed to reg, rm. If an opcode extension is needed
@@ -106,23 +115,51 @@ encodeRM := (reg, rm) => (
 	char(mod + encodeReg(reg) * 8 + encodeReg(rm))
 )
 
-encodeInst := (inst, labels) => (
-	` map any potential labels in arguments to their correct values `
-	args := map(inst.args, arg => labels.(arg) :: {
-		() -> arg
-		_ -> labels.(arg)
+encodeInst := (inst, offset, labels, symbols, addReloc) => (
+	` normalize instruction aliases `
+	instName := (InstAliases.(inst.name) :: {
+		() -> inst.name
+		_ -> InstAliases.(inst.name)
 	})
 
-	` TODO: when implementing labels in .text,
-		while encoding instructions, update a global table of label -> offset
-		in .text in which to update with a toBytes(label, 4), then go through
-		and update them in the generated machine code in a second pass. `
+	` map any potential labels in arguments to their correct values `
+	args := map(inst.args, arg => [labels.(arg), symbols.(arg)] :: {
+		[(), ()] -> arg
+		[_, ()] -> labels.(arg)
+		_ -> (
+			` certain jump instructions store labels at offset 2 `
+			byteOffset := (instName :: {
+				'jmp' -> 1
+				'je' -> 2
+				'jne' -> 2
+				'jl' -> 2
+				'jge' -> 2
+				'jle' -> 2
+				'jg' -> 2
+				'mov' -> 1
+				` assume all other ALU instructions take the form:
+					primary opcode + r/m byte + immediate `
+				_ -> 2
+			})
+			addReloc(arg, offset, byteOffset)
+			symbols.(arg)
+		)
+	})
 
 	` emit correctly encoded instruction `
-	append([inst.name], args) :: {
+	append([instName], args) :: {
 		['mov', _, _] -> map(args, type) :: {
 			['string', 'string'] -> transform('89') + encodeRM(args.1, args.0)
 			['string', 'number'] -> char(xeh('b8') + encodeReg(args.0)) + toBytes(args.1, 4)
+			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
+		}
+		['push', _] -> type(args.0) :: {
+			'string' -> char(xeh('50') + encodeReg(args.0))
+			'number' -> transform('68') + toBytes(args.0, 4)
+			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
+		}
+		['pop', _] -> type(args.0) :: {
+			'string' -> transform('8f') + encodeRM(0, args.0)
 			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
 		}
 		['inc', _] -> transform('ff') + encodeRM((), args.0)
@@ -154,12 +191,22 @@ encodeInst := (inst, labels) => (
 			['string', 'number'] -> transform('81') + encodeRM(6, args.0) + toBytes(args.1, 4)
 			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
 		}
+		['cmp', _, _] -> map(args, type) :: {
+			['string', 'string'] -> transform('39') + encodeRM(args.1, args.0)
+			['string', 'number'] -> transform('81') + encodeRM(7, args.0) + toBytes(args.1, 4)
+			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
+		}
+		['jmp', _] -> transform('e9') + toBytes(args.0, 4)
+		['je', _] -> transform('0f 84') + toBytes(args.0, 4)
+		['jne', _] -> transform('0f 85') + toBytes(args.0, 4)
+		['jl', _] -> transform('0f 8c') + toBytes(args.0, 4)
+		['jge', _] -> transform('0f 8c') + toBytes(args.0, 4)
+		['jle', _] -> transform('0f 8d') + toBytes(args.0, 4)
+		['jg', _] -> transform('0f 8e') + toBytes(args.0, 4)
 		['int', _] -> transform('cd') + char(args.0)
 		['syscall'] -> transform('0f 05')
-		_ -> (
-			log(f('Unknown instruction: {{0}}', [instString(inst)]))
-			()
-		)
+		['ret'] -> transform('c3')
+		_ -> failWith(f('Unknown instruction: {{0}}', [instString(inst)]))
 	}
 )
 
@@ -247,33 +294,79 @@ assemble := prog => (
 	}, {cur: (), labels: {}, data: ''})
 
 	` parse and translate text code into instruction seq `
-	insts := map(sections.text, line => (
+	symbols := {} `` symbol -> instruction offset
+	insts := map(sections.text, (line, i) => (
+		` instruction offset is line offset - # symbol labels `
+		offset := i - len(symbols)
 		pcs := map(split(line, ' '), s => trimSuffix(s, ','))
-		pcs := map(pcs, pc => hasPrefix?(pc, '0x') :: {
-			true -> xeh(slice(pc, 2, len(pc)))
-			_ -> number?(pc) :: {
-				true -> number(pc)
-				false -> pc
-			}
-		})
-		{
-			name: pcs.0
-			args: slice(pcs, 1, len(pcs))
+
+		len(pcs) = 1 & hasSuffix?(pcs.0, ':') :: {
+			true -> (
+				symbol := trimSuffix(pcs.0, ':')
+				symbols.(symbol) := offset
+				()
+			)
+			_ -> (
+				pcs := map(pcs, pc => hasPrefix?(pc, '0x') :: {
+					true -> xeh(slice(pc, 2, len(pc)))
+					_ -> number?(pc) :: {
+						true -> number(pc)
+						false -> pc
+					}
+				})
+				{
+					name: pcs.0
+					args: slice(pcs, 1, len(pcs))
+				}
+			)
 		}
 	))
+	insts := filter(insts, inst => ~(inst = ()))
+
+	` set up relocation list (symbol table) for machine code generation `
+	relocations := []
+	addRelocation := (name, instOffset, byteOffset) => relocations.len(relocations) := {
+		name: name
+		instOffset: instOffset
+		byteOffset: byteOffset
+	}
 
 	` generate machine code `
-	mCode := map(insts, inst => encodeInst(inst, segments.labels))
-
-	` emit generated code `
-	some(map(mCode, x => x = ())) :: {
-		false -> {
-			text: cat(mCode, '')
-			rodata: segments.data
-		}
+	mCode := map(insts, (inst, i) => encodeInst(inst, i, segments.labels, symbols, addRelocation))
+	every(map(mCode, code => ~(code = ()))) :: {
+		false -> ()
 		_ -> (
-			log('Assembly error, exiting.')
-			()
+			cumulativeCodeOffsets := reduce(mCode, (cum, code) => (
+				last := cum.(len(cum) - 1)
+				cur := last + len(code)
+				cum.len(cum) := cur
+			), [0])
+
+			` compute machine code address (vaddr) offsets for each label `
+			symbolAddrs := {}
+			each(
+				keys(symbols)
+				symbol => symbolAddrs.(symbol) := cumulativeCodeOffsets.(symbols.(symbol))
+			)
+
+			` perform local relocations `
+			each(relocations, rlc => (
+				inst := mCode.(rlc.instOffset)
+				relAddr := symbolAddrs.(rlc.name) - cumulativeCodeOffsets.(rlc.instOffset + 1)
+				mCode.(rlc.instOffset) := (
+					` assume for now that relocated addresses are relative & 32-bit `
+					inst.(rlc.byteOffset) := toBytes(relAddr, 4)
+				)
+			))
+
+			` emit generated code `
+			some(map(mCode, x => x = ())) :: {
+				false -> {
+					text: cat(mCode, '')
+					rodata: segments.data
+				}
+				_ -> failWith('Assembly error, exiting.')
+			}
 		)
 	}
 )

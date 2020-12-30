@@ -18,8 +18,7 @@ assemble := asm.assemble
 `
 TODO:
 - [ ] Support for load/store from memory, lea instruction
-- [ ] Support for named blocks in .text and jumps (loops)
-- [ ] Support for function calls and stack pop/push
+- [ ] Support for function calls
 - [ ] Dynamic linking
 - [ ] Compile from C subset
 `
