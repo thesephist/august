@@ -72,7 +72,7 @@ Disassembly of section .text:
 
 ### Assembler
 
-The instruction encoding is handled by the [`./src/asm.ink`](src/asm.ink) library within the project. Currently, August can assemble simple programs that work with 32-bit registers and the ALU, make system calls and function calls per the x86 calling convention, and don't read or write to the heap. Even with these basic building blocks, we can write programs that do interesting things like loop, branch, and make recursive calls. You can check out some examples in [`test/asm/`](test/asm/).
+The instruction encoding is handled by the [`./src/asm.ink`](src/asm.ink) library within the project. Currently, August can assemble simple programs that work with 32-bit registers and the ALU, make system calls and function calls per the x86 calling convention, and read or write to memory. Even with these basic building blocks, we can write programs that do interesting things like loop, branch, manipulate memory, and make recursive calls. You can check out some examples in [`test/asm/`](test/asm/).
 
 _more to come._
 

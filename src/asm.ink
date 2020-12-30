@@ -74,9 +74,9 @@ instString := inst => cat(map(append([inst.name], map(inst.args, argString)), st
 decodeArg := arg => [hasPrefix?(arg, '0x'), number?(arg)] :: {
 	[true, _] -> xeh(slice(arg, 2, len(arg)))
 	[_, true] -> number(arg)
-	_ -> [hasPrefix?(arg, '"'), contains?(arg, ' ')] :: {
+	_ -> [hasPrefix?(arg, '"'), hasPrefix?(arg, '[')] :: {
 		[true, _] -> replace(trim(arg, '"'), '\\"', '"')
-		[_, true] -> map(split(arg, ' '), decodeArg)
+		[_, true] -> map(split(trimPrefix(trimSuffix(arg, ']'), '['), ' '), decodeArg)
 		_ -> arg
 	}
 }
@@ -198,14 +198,13 @@ encodeSIBRM := (mod, reg) => char(mod + encodeReg(reg) * 8 + 4)
 	a memory address), following the SIB mode R/M byte `
 encodeSIB := (base, scale, index) => (
 	scaleBits := (scale :: {
-		'1' -> 0 `` 00
-		'2' -> 64 `` 01
-		'4' -> 128 `` 10
-		'8' -> 192 `` 11
+		1 -> 0 `` 00
+		2 -> 64 `` 01
+		4 -> 128 `` 10
+		8 -> 192 `` 11
 		_ -> 0 `` undefined
 	})
 	[encodeReg(base), encodeReg(index)] :: {
-		` TODO: support EBP register as base register if MOD != 0 so is not displacement `
 		[encodeReg('ebp'), _] -> failWith(f('Unsupported base register in {{0}} + {{2}} * {{1}}', [base, scale, index]))
 		[_, encodeReg('esp')] -> failWith(f('Unsupported index register in {{0}} + {[2]} * {{1}}', [base, scale, index]))
 		_ -> char(scaleBits + encodeReg(index) * 8 + encodeReg(base))
@@ -214,6 +213,8 @@ encodeSIB := (base, scale, index) => (
 
 ` encodeMem encodes a pair of register, memory reference operands `
 encodeMem := (reg, mem) => mem :: {
+	[_] -> char(0 + encodeReg(reg) * 8 + encodeReg(mem.0))
+	[_, _] -> char(128 + encodeReg(reg) * 8 + encodeReg(mem.0)) + toBytes(mem.1, 4)
 	[_, _, _] -> sib := encodeSIB(mem.0, mem.1, mem.2) :: {
 		() -> ()
 		_ -> encodeSIBRM(0, reg) + sib
@@ -222,7 +223,7 @@ encodeMem := (reg, mem) => mem :: {
 		() -> ()
 		_ -> encodeSIBRM(128, reg) + encodeSIB(mem.0, mem.1, mem.2) + toBytes(mem.3, 4)
 	}
-	_ -> failWith(f('Unsupported memory location in instruction: {{0}}', [instString(inst)]))
+	_ -> failWith(f('Unsupported memory location in instruction: {{0}}', [mem]))
 }
 
 encodeInst := (inst, offset, labels, symbols, addReloc) => (
@@ -508,7 +509,7 @@ assemble := prog => (
 			'' -> parsed
 			_ -> parsed.len(parsed) := token
 		}, s => len(s) > 0)
-		']' -> sub(parsed.len(parsed) := token, '', false, i + 1)
+		']' -> sub(parsed.len(parsed) := '[' + token + ']', '', false, i + 1)
 		'[' -> sub(parsed.len(parsed) := token, '', true, i + 1)
 		' ' -> inMem? :: {
 			true -> sub(parsed, token + line.(i), inMem?, i + 1)
