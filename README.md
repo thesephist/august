@@ -103,6 +103,7 @@ In writing an x86/x64 assembler, the following were especially helpful to get me
 - [The x86asm.net ISA reference](http://ref.x86asm.net/coder64.html), which is comprehensive enough for a toy assembler and easy to navigate once you get used to the compact notation
 - [Encoding x86 Instructions](http://www.cs.loyola.edu/~binkley/371/Encoding_Real_x86_Instructions.html), which was a helpful guide to understanding how x86 and x64 instructions are encoded
 - The [x64 cheat sheet](http://cs.brown.edu/courses/cs033/docs/guides/x64_cheatsheet.pdf) for a handy list of the core x86/x64 instruction set
+- The [Calling Conventions](https://wiki.osdev.org/Calling_Conventions) article on OSDev Wiki
 
 ## Development
 

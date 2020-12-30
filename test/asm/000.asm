@@ -1,33 +1,30 @@
 ; Hello World pyramid: loops, conditionals, calls
 
 _start:
-	mov eax 1
-
-loop:
-	push eax
-
 	; load argument and call
-	mov edi eax
-	call print
 
-	pop eax
-	cmp eax len
-	je exit
+	; mov rdi msg
+	xor eax eax
+	mov ebx 0
+	lea edi [ebx 8 eax msg]
 
-	inc eax
-	jmp loop
+	; mov rsi len
+	xor esi esi
+	mov eax len
+	mov esi, len
+	call print_hello
 
 exit:
 	mov eax 60
 	mov edi 0
 	syscall
 
-print:
-	mov edx edi
+print_hello:
+	mov rdx rsi ; 2nd arg
+	mov rsi rdi ; 1st arg
 
 	mov eax 0x1
 	mov edi 0x1
-	mov esi msg
 	syscall
 
 	mov eax 0x1

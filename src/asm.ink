@@ -12,6 +12,7 @@ str := load('../vendor/str')
 
 log := std.log
 f := std.format
+hex := std.hex
 xeh := std.xeh
 cat := std.cat
 slice := std.slice
@@ -49,7 +50,81 @@ Tab := char(9)
 number? := s => every(map(s, c => digit?(c) | c = '-'))
 failWith := msg => (log(msg), ())
 
-instString := inst => cat(map(append([inst.name], inst.args), string), ' ')
+` argString and instString serialize represenetations of instruction objects to
+	their string representations in assembly syntax. Instruction is a name with a
+	list of arguments. Each argument is one of:
+
+	1. a number, representing an immediate
+	2. a string, representing a register or un-resolved symbol
+	3. a composite, representing a memory location containng other arguments `
+argString := arg => type(arg) :: {
+	'number' -> '0x' + hex(arg)
+	'composite' -> '[' + cat(arg, ' ') + ']'
+	_ -> arg
+}
+instString := inst => cat(map(append([inst.name], map(inst.args, argString)), string), ' ')
+
+` generic decoder for arguments that are potentially:
+	- a register
+	- an ASCII string literal
+	- a hex byte
+	- a decimal byte
+	- a symbol or label (no-op)
+	- a memory location `
+decodeArg := arg => [hasPrefix?(arg, '0x'), number?(arg)] :: {
+	[true, _] -> xeh(slice(arg, 2, len(arg)))
+	[_, true] -> number(arg)
+	_ -> [hasPrefix?(arg, '"'), contains?(arg, ' ')] :: {
+		[true, _] -> replace(trim(arg, '"'), '\\"', '"')
+		[_, true] -> split(arg, ' ')
+		_ -> arg
+	}
+}
+
+regSize := reg => reg :: {
+	` 4-byte registers `
+	'eax' -> 4
+	'ecx' -> 4
+	'edx' -> 4
+	'ebx' -> 4
+	'esp' -> 4
+	'ebp' -> 4
+	'esi' -> 4
+	'edi' -> 4
+	` 8-byte registers `
+	'rax' -> 8
+	'rcx' -> 8
+	'rdx' -> 8
+	'rbx' -> 8
+	'rsp' -> 8
+	'rbp' -> 8
+	'rsi' -> 8
+	'rdi' -> 8
+	` 2-byte registers `
+	'ax' -> 2
+	'cx' -> 2
+	'dx' -> 2
+	'bx' -> 2
+	'sp' -> 2
+	'bp' -> 2
+	'si' -> 2
+	'di' -> 2
+	` byte registers `
+	'al' -> 1
+	'cl' -> 1
+	'dl' -> 1
+	'bl' -> 1
+	'ah' -> 1
+	'ch' -> 1
+	'dh' -> 1
+	'bh' -> 1
+}
+argSize := arg => type(arg) :: {
+	'number' -> 4 `` all immediates are 32-bit for now
+	'string' -> regSize(arg)
+	'composite' -> argSize(arg.0)
+	_ -> ()
+}
 
 ` converts a register name to its bitstring representation `
 encodeReg := reg => reg :: {
@@ -115,6 +190,44 @@ encodeRM := (reg, rm) => (
 	char(mod + encodeReg(reg) * 8 + encodeReg(rm))
 )
 
+` encodeSIBRM encodes an R/M byte in an x86 instruction in SIB mode, which means
+	a SIB field follows this byte to specify a memory address `
+encodeSIBRM := (mod, reg) => char(mod + encodeReg(reg) * 8 + 4)
+
+` encodeSIB encodes a SIB byte in an x86 instruction in SIB mode (operating on
+	a memory address), following the SIB mode R/M byte `
+encodeSIB := (base, scale, index) => (
+	scaleBits := (scale :: {
+		'1' -> 0 `` 00
+		'2' -> 64 `` 01
+		'4' -> 128 `` 10
+		'8' -> 192 `` 11
+		_ -> 0 `` undefined
+	})
+	[encodeReg(base), encodeReg(index)] :: {
+		` TODO: support EBP register as base register if MOD != 0 so is not displacement `
+		[encodeReg('ebp'), _] -> failWith(f('Unsupported base register in {{0}} + {{2}} * {{1}}', [base, scale, index]))
+		[_, encodeReg('esp')] -> failWith(f('Unsupported index register in {{0}} + {[2]} * {{1}}', [base, scale, index]))
+		_ -> char(scaleBits + encodeReg(index) * 8 + encodeReg(base))
+	}
+)
+
+` general encoder for encoding a pair of operands of any type `
+encodeOperands := (a0, a1) => type(a1) = 'composite' :: {
+	true -> mem := a1 :: {
+		[_, _, _] -> sib := encodeSIB(mem.0, mem.1, mem.2) :: {
+			() -> ()
+			_ -> encodeSIBRM(0, a0) + sib
+		}
+		[_, _, _, _] -> sib := encodeSIB(mem.0, mem.1, mem.2) :: {
+			() -> ()
+			_ -> encodeSIBRM(128, a0) + encodeSIB(mem.0, mem.1, mem.2) + toBytes(mem.3, 4)
+		}
+		_ -> failWith(f('Unsupported memory location in instruction: {{0}}', [instString(inst)]))
+	}
+	_ -> encodeRM(a1, a0)
+}
+
 encodeInst := (inst, offset, labels, symbols, addReloc) => (
 	` normalize instruction aliases `
 	instName := (InstAliases.(inst.name) :: {
@@ -123,11 +236,11 @@ encodeInst := (inst, offset, labels, symbols, addReloc) => (
 	})
 
 	` map any potential labels in arguments to their correct values `
-	args := map(inst.args, arg => [labels.(arg), symbols.(arg)] :: {
+	derefArg := (arg, mem?) => [labels.(arg), symbols.(arg)] :: {
 		[(), ()] -> arg
 		[_, ()] -> labels.(arg)
 		_ -> (
-			` certain jump instructions store labels at offset 2 `
+			` is this instruction accessing memory? `
 			byteOffset := (instName :: {
 				'call' -> 1
 				'jmp' -> 1
@@ -137,63 +250,95 @@ encodeInst := (inst, offset, labels, symbols, addReloc) => (
 				'jge' -> 2
 				'jle' -> 2
 				'jg' -> 2
-				'mov' -> 1
-				` assume all other ALU instructions take the form:
-					primary opcode + r/m byte + immediate `
-				_ -> 2
+				` assume all other ALU instructions take the form either:
+				1. primary opcode + R/M byte + immediate
+				2. primary opcode + R/M byte + SIB byte + displacement `
+				_ -> mem? :: {
+					true -> 3
+					_ -> 2
+				}
 			})
 			addReloc(arg, offset, byteOffset)
 			symbols.(arg)
 		)
+	}
+	args := map(inst.args, arg => mem? := type(arg) = 'composite' :: {
+		true -> map(arg, derefArg)
+		_ -> derefArg(arg)
 	})
 
 	` emit correctly encoded instruction `
 	append([instName], args) :: {
 		['mov', _, _] -> map(args, type) :: {
-			['string', 'string'] -> transform('89') + encodeRM(args.1, args.0)
+			['string', 'string'] -> operands := encodeOperands(args.0, args.1) :: {
+				() -> ()
+				_ -> transform('89') + operands
+			}
 			['string', 'number'] -> char(xeh('b8') + encodeReg(args.0)) + toBytes(args.1, 4)
 			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
 		}
 		['push', _] -> type(args.0) :: {
 			'string' -> char(xeh('50') + encodeReg(args.0))
 			'number' -> transform('68') + toBytes(args.0, 4)
-			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
+			_ -> failWith(f('Unsupported instruction: {0}}', [instString(inst)]))
 		}
 		['pop', _] -> type(args.0) :: {
 			'string' -> transform('8f') + encodeRM(0, args.0)
 			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
+		}
+		['lea', _, _] -> operands := encodeOperands(args.0, args.1) :: {
+			() -> ()
+			_ -> transform('8d') + operands
 		}
 		['inc', _] -> transform('ff') + encodeRM((), args.0)
 		['dec', _] -> transform('ff') + encodeRM(1, args.0)
 		['not', _] -> transform('f7') + encodeRM(2, args.0)
 		['neg', _] -> transform('f7') + encodeRM(3, args.0)
 		['add', _, _] -> map(args, type) :: {
-			['string', 'string'] -> transform('01') + encodeRM(args.1, args.0)
+			['string', 'composite'] -> operands := encodeOperands(args.0, args.1) :: {
+				() -> ()
+				_ -> transform('01') + operands
+			}
 			['string', 'number'] -> transform('81') + encodeRM(0, args.0) + toBytes(args.1, 4)
 			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
 		}
 		['or', _, _] -> map(args, type) :: {
-			['string', 'string'] -> transform('09') + encodeRM(args.1, args.0)
+			['string', 'string'] -> operands := encodeOperands(args.0, args.1) :: {
+				() -> ()
+				_ -> transform('09') + operands
+			}
 			['string', 'number'] -> transform('81') + encodeRM(1, args.0) + toBytes(args.1, 4)
 			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
 		}
 		['and', _, _] -> map(args, type) :: {
-			['string', 'string'] -> transform('21') + encodeRM(args.1, args.0)
+			['string', 'string'] -> operands := encodeOperands(args.0, args.1) :: {
+				() -> ()
+				_ -> transform('21') + operands
+			}
 			['string', 'number'] -> transform('81') + encodeRM(4, args.0) + toBytes(args.1, 4)
 			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
 		}
 		['sub', _, _] -> map(args, type) :: {
-			['string', 'string'] -> transform('29') + encodeRM(args.1, args.0)
+			['string', 'string'] -> operands := encodeOperands(args.0, args.1) :: {
+				() -> ()
+				_ -> transform('29') + operands
+			}
 			['string', 'number'] -> transform('81') + encodeRM(5, args.0) + toBytes(args.1, 4)
 			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
 		}
 		['xor', _, _] -> map(args, type) :: {
-			['string', 'string'] -> transform('31') + encodeRM(args.1, args.0)
+			['string', 'string'] -> operands := encodeOperands(args.0, args.1) :: {
+				() -> ()
+				_ -> transform('31') + operands
+			}
 			['string', 'number'] -> transform('81') + encodeRM(6, args.0) + toBytes(args.1, 4)
 			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
 		}
 		['cmp', _, _] -> map(args, type) :: {
-			['string', 'string'] -> transform('39') + encodeRM(args.1, args.0)
+			['string', 'string'] -> operands := encodeOperands(args.0, args.1) :: {
+				() -> ()
+				_ -> transform('39') + operands
+			}
 			['string', 'number'] -> transform('81') + encodeRM(7, args.0) + toBytes(args.1, 4)
 			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
 		}
@@ -251,8 +396,8 @@ assemble := prog => (
 			_ -> sub(parsed, token + line.(i), inQuote?, i + 1)
 		}
 		'"' -> inQuote? :: {
-			true -> sub(parsed.len(parsed) := token, '', ~inQuote?, i + 1)
-			_ -> sub(parsed.len(parsed) := token, '', ~inQuote?, i + 1)
+			true -> sub(parsed.len(parsed) := '"' + token + '"', '', false, i + 1)
+			_ -> sub(parsed.len(parsed) := token, '', true, i + 1)
 		}
 		' ' -> inQuote? :: {
 			true -> sub(parsed, token + line.(i), inQuote?, i + 1)
@@ -262,10 +407,10 @@ assemble := prog => (
 	})([], '', false, 0)
 	decodeData := s => (
 		pcs := parseQuotedLine(s)
-		chunks := map(pcs, pc => [hasPrefix?(pc, '0x'), number?(pc)] :: {
-			[true, _] -> char(xeh(slice(pc, 2, len(pc))))
-			[_, true] -> char(number(pc))
-			_ -> replace(pc, '\\"', '"')
+		decoded := map(pcs, decodeArg)
+		chunks := map(decoded, pc => type(pc) :: {
+			'number' -> char(pc)
+			_ -> string(pc)
 		})
 		chunks :: {
 			() -> ()
@@ -296,12 +441,27 @@ assemble := prog => (
 		}
 	}, {cur: (), labels: {}, data: ''})
 
+	` helper to parse bracketed memory addresses `
+	parseInstLine := line => (sub := (parsed, token, inMem?, i) => line.(i) :: {
+		() -> filter(token :: {
+			'' -> parsed
+			_ -> parsed.len(parsed) := token
+		}, s => len(s) > 0)
+		']' -> sub(parsed.len(parsed) := token, '', false, i + 1)
+		'[' -> sub(parsed.len(parsed) := token, '', true, i + 1)
+		' ' -> inMem? :: {
+			true -> sub(parsed, token + line.(i), inMem?, i + 1)
+			_ -> sub(parsed.len(parsed) := token, '', inMem?, i + 1)
+		}
+		_ -> sub(parsed, token + line.(i), inMem?, i + 1)
+	})([], '', false, 0)
+
 	` parse and translate text code into instruction seq `
 	symbols := {} `` symbol -> instruction offset
 	insts := map(sections.text, (line, i) => (
 		` instruction offset is line offset - # symbol labels `
 		offset := i - len(symbols)
-		pcs := map(split(line, ' '), s => trimSuffix(s, ','))
+		pcs := map(parseInstLine(line), s => trimSuffix(s, ','))
 
 		len(pcs) = 1 & hasSuffix?(pcs.0, ':') :: {
 			true -> (
@@ -310,13 +470,7 @@ assemble := prog => (
 				()
 			)
 			_ -> (
-				pcs := map(pcs, pc => hasPrefix?(pc, '0x') :: {
-					true -> xeh(slice(pc, 2, len(pc)))
-					_ -> number?(pc) :: {
-						true -> number(pc)
-						false -> pc
-					}
-				})
+				pcs := map(pcs, decodeArg)
 				{
 					name: pcs.0
 					args: slice(pcs, 1, len(pcs))
