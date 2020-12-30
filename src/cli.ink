@@ -18,7 +18,6 @@ assemble := asm.assemble
 `
 TODO:
 - [ ] Support for load/store from memory, lea instruction
-- [ ] Support for function calls
 - [ ] Dynamic linking
 - [ ] Compile from C subset
 `

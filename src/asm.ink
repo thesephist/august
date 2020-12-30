@@ -129,6 +129,7 @@ encodeInst := (inst, offset, labels, symbols, addReloc) => (
 		_ -> (
 			` certain jump instructions store labels at offset 2 `
 			byteOffset := (instName :: {
+				'call' -> 1
 				'jmp' -> 1
 				'je' -> 2
 				'jne' -> 2
@@ -196,6 +197,7 @@ encodeInst := (inst, offset, labels, symbols, addReloc) => (
 			['string', 'number'] -> transform('81') + encodeRM(7, args.0) + toBytes(args.1, 4)
 			_ -> failWith(f('Unsupported instruction: {{0}}', [instString(inst)]))
 		}
+		['call', _] -> transform('e8') + toBytes(args.0, 4)
 		['jmp', _] -> transform('e9') + toBytes(args.0, 4)
 		['je', _] -> transform('0f 84') + toBytes(args.0, 4)
 		['jne', _] -> transform('0f 85') + toBytes(args.0, 4)
@@ -206,6 +208,7 @@ encodeInst := (inst, offset, labels, symbols, addReloc) => (
 		['int', _] -> transform('cd') + char(args.0)
 		['syscall'] -> transform('0f 05')
 		['ret'] -> transform('c3')
+		['nop'] -> transform('90')
 		_ -> failWith(f('Unknown instruction: {{0}}', [instString(inst)]))
 	}
 )
