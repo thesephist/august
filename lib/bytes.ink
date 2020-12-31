@@ -3,6 +3,7 @@
 std := load('../vendor/std')
 str := load('../vendor/str')
 
+hex := std.hex
 xeh := std.xeh
 cat := std.cat
 map := std.map
@@ -42,4 +43,13 @@ zeroes := n => toBytes(0, n)
 
 ` 'xx xx xx xx' -> byte string `
 transform := hexs => cat(map(split(hexs, ' '), code => char(xeh(code))), '')
+
+zeroExtend := hx => len(hx) :: {
+	2 -> hx
+	1 -> '0' + hx
+	0 -> '00'
+}
+
+` useful for test output `
+untransform := bytes => cat(map(bytes, byte => zeroExtend(hex(point(byte)))), ' ')
 

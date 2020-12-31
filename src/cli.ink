@@ -17,7 +17,6 @@ assemble := asm.assemble
 
 `
 TODO:
-- [ ] Tests for asm.ink comparing assemble(code) = transform('xx xx xx ...')
 - [ ] Symbol table for .text
 - [ ] Dynamic linking
 - [ ] Compile from C subset

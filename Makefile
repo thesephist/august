@@ -5,8 +5,8 @@ run:
 	./src/cli.ink ./test/asm/000.asm ./b.out; ./b.out; echo $$?
 
 # run all tests under test/
-check: run
-	ink ./test/tests.ink
+check:
+	ink ./src/test.ink
 t: check
 
 fmt:

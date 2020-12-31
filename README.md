@@ -112,5 +112,7 @@ To work on August, you obviously need [Ink](https://dotink.co/) installed. [Inkf
 When I work on August (especially the assembler), I usually have two other panes open, running:
 
 - `ls test/asm/*.asm lib/*.ink src/*.ink | entr -cr make` so every file change assembles and runs a program to test
-- `ls ./b.out | entr -cr objdump -d -Mintel ./b.out` so that every time the executable is re-compiled, I can see the disassembly of the executable and check it against the intended assmbly code.
+- `ls ./b.out | entr -cr objdump -d -Mintel ./b.out` so that every time the executable is re-compiled, I can see the disassembly of the executable and check it against the intended assembly code.
+
+There is a growing test suite for the assembler / x86 instruction encoder, which you can run with `make check` or `make t`.
 
