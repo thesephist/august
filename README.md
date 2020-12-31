@@ -1,8 +1,8 @@
 # August 🪓
 
-**August** is an assembler written from scratch in [Ink](https://dotink.co/) for me to learn about assemblers, linkers, and compiler backends. It currently aims to support assembling and statically linking [ELF](https://en.wikipedia.org/wiki/Executable_and_Linkable_Format) executables for ARM, RISC-V, and x86_64 architectures, though Mach-O support for ARM and x86_64 are under consideration. In the long term, August might also become a code generation backend for a compiler for some small subset of C written in Ink.
+**August** is an assembler written from scratch in [Ink](https://dotink.co/) for me to learn about assemblers, linkers, and compiler backends. It currently supports assembling and linking x86_64 [ELF](https://en.wikipedia.org/wiki/Executable_and_Linkable_Format) binaries, and aims to support ELF executables for ARM, RISC-V, and x86_64 architectures. In the long term, August might also become a code generation backend for a compiler written in Ink for some small subset of C.
 
-_August is ⚠️ under development ⚠️. Many parts of the system do not work at all yet._
+_August is ⚠️ under development ⚠️. Some parts of the system do not work yet._
 
 ## Design
 
@@ -72,9 +72,7 @@ Disassembly of section .text:
 
 ### Assembler
 
-The instruction encoding is handled by the [`./src/asm.ink`](src/asm.ink) library within the project. Currently, August can assemble simple programs that work with 32-bit registers and the ALU, make system calls and function calls per the x86 calling convention, and read or write to memory. Even with these basic building blocks, we can write programs that do interesting things like loop, branch, manipulate memory, and make recursive calls. You can check out some examples in [`test/asm/`](test/asm/).
-
-_more to come._
+The instruction encoding is handled by the [`./src/asm.ink`](src/asm.ink) library within the project. Currently, August can assemble simple programs that work with 32-bit registers and the ALU, handle branches and jumps, make system calls and function calls per the x86 calling convention, and read or write to memory. Even with these basic building blocks, we can write programs that do interesting things like loop, manipulate memory, and make recursive calls. You can check out some examples in [`test/asm/`](test/asm/).
 
 ### ELF Linker
 
@@ -84,9 +82,7 @@ August uses a library for constructing ELF executable files located at [`./src/e
 - `.rodata` containing read-only data loaded into process memory as read-only
 - `.shstrtab` containing section headers
 
-The content of `.text` and `.rodata` sections can be provided to the ELF library, which will return a fully linked ELF binary as the result.
-
-_more to come._
+The content of `.text` and `.rodata` sections can be provided to the ELF library, which will return a fully linked ELF binary as the result. I'm planning to add support for a symbol table in the generated binary in the future.
 
 ## References and further reading
 
