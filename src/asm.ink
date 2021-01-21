@@ -582,6 +582,7 @@ assemble := prog => (
 			some(map(mCode, x => x = ())) :: {
 				false -> {
 					text: cat(mCode, '')
+					symbols: symbolAddrs
 					rodata: segments.data
 				}
 				_ -> failWith('Assembly error, exiting.')

@@ -15,13 +15,6 @@ asm := load('asm')
 makeElf := elf.makeElf
 assemble := asm.assemble
 
-`
-TODO:
-- [ ] Symbol table for .text
-- [ ] Dynamic linking
-- [ ] Compile from C subset
-`
-
 AsmPath := args().2
 ElfPath := args().3
 
@@ -33,7 +26,7 @@ ElfPath := args().3
 			() -> ()
 			_ -> (
 				` generate ELF file `
-				elfFile := makeElf(assembly.text, assembly.rodata)
+				elfFile := makeElf(assembly.text, assembly.symbols, assembly.rodata)
 
 				` write binary to disk `
 				writeFile(ElfPath, elfFile, res => res :: {

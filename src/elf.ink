@@ -3,11 +3,14 @@
 
 std := load('../vendor/std')
 str := load('../vendor/str')
+quicksort := load('../vendor/quicksort')
 
 log := std.log
 f := std.format
 cat := std.cat
 map := std.map
+append := std.append
+sortBy := quicksort.sortBy
 
 bytes := load('../lib/bytes')
 
@@ -55,6 +58,26 @@ ProgFlag := {
 	Read: 4
 }
 
+SymTabInfo := {
+	NoType: 0
+	Object: 1
+	Func: 2
+	Section: 3
+	File: 4
+	Common: 5
+	TLS: 6
+	Local: 0
+	Global: 1
+	Weak: 2
+}
+
+SymTabOther := {
+	Default: 0
+	Internal: 1
+	Hidden: 2
+	Protected: 3
+}
+
 ` system page size, assumed to be 4K, used for various padding sizes `
 PageSize := 4096
 
@@ -62,15 +85,59 @@ PageSize := 4096
 ExecStartAddr := 4198400
 ROStartAddr := 7032832
 
-makeElf := (text, rodata) => (
-	SectionNames := ['', '.text', '.rodata', '.shstrtab']
+makeSymTab := (symbols, registerString) => (
+	symbolAddrs := sortBy(map(keys(symbols), sym => {
+		sym: sym
+		addr: symbols.(sym)
+	}), rec => rec.addr)
+
+	emptyEntry := {
+		name: toBytes(0, 4)
+		info: toBytes(SymTabInfo.NoType, 1)
+		other: toBytes(SymTabOther.Default, 1)
+		shndx: toBytes(0, 2)
+		value: toBytes(0, 8)
+		size: toBytes(0, 8)
+	}
+	entries := append([emptyEntry], map(symbolAddrs, rec => {
+		name: toBytes(registerString(rec.sym), 4)
+		info: toBytes(SymTabInfo.Func, 1)
+		other: toBytes(SymTabOther.Default, 1)
+		` symtab entries are for the .text section only, at section header index 1 `
+		shndx: toBytes(1, 2)
+		value: toBytes(ExecStartAddr + rec.addr, 8)
+		size: toBytes(0, 8)
+	}))
+
+	cat(map(entries, ent => ent.name + ent.info + ent.other + ent.shndx + ent.value + ent.size), '')
+)
+
+makeElf := (text, symbols, rodata) => (
+	Strings := [char(0)]
+	registerString := name => (
+		idx := len(Strings.0)
+		Strings.0 := Strings.0 + name + char(0)
+		idx
+	)
+
+	` create a symbol table from a map of symbols to their values `
+	symtab := makeSymTab(symbols, registerString)
 
 	` .text must push .rodata to the next page `
 	minTextPages := floor(len(text) / PageSize) + 1
 	text := padEndNull(text, PageSize * minTextPages)
 
+	NullSection := {
+		name: toBytes(0, 4)
+		type: toBytes(SectionType.Null, 4)
+		flags: zeroes(8)
+		addr: zeroes(8)
+		offset: zeroes(8)
+		align: zeroes(8)
+		body: ''
+	}
 	TextSection := {
-		name: toBytes(1, 4)
+		name: toBytes(registerString('.text'), 4)
 		type: toBytes(SectionType.ProgBits, 4)
 		flags: toBytes(SectionFlag.Alloc | SectionFlag.ExecInstr, 8)
 		addr: toBytes(ExecStartAddr, 8)
@@ -79,7 +146,7 @@ makeElf := (text, rodata) => (
 		body: text
 	}
 	RODataSection := {
-		name: toBytes(7, 4)
+		name: toBytes(registerString('.rodata'), 4)
 		type: toBytes(SectionType.ProgBits, 4)
 		flags: toBytes(SectionFlag.Alloc, 8)
 		addr: toBytes(ROStartAddr, 8)
@@ -87,14 +154,30 @@ makeElf := (text, rodata) => (
 		align: toBytes(1, 8)
 		body: rodata
 	}
-	StrTabSection := {
-		name: toBytes(15, 4)
-		type: toBytes(SectionType.StrTab, 4)
+	SymTabSection := {
+		name: toBytes(registerString('.symtab'), 4)
+		type: toBytes(SectionType.SymTab, 4)
 		flags: zeroes(8)
 		addr: zeroes(8)
 		offset: toBytes(PageSize + len(text) + len(rodata), 8)
 		align: toBytes(1, 8)
-		body: cat(map(SectionNames, name => name + char(0)), '')
+		body: symtab
+
+		` specific to .symtab `
+		link: toBytes(4, 4)
+		` for now, all symbols are local, so index of first global symbol
+			(sh_info) > total number of symbols + 1 (null symbol) `
+		info: toBytes(len(symbols) + 1, 4)
+		entsize: toBytes(24, 8)
+	}
+	StrTabSection := {
+		name: toBytes(registerString('.shstrtab'), 4)
+		type: toBytes(SectionType.StrTab, 4)
+		flags: zeroes(8)
+		addr: zeroes(8)
+		offset: toBytes(PageSize + len(text) + len(rodata) + len(symtab), 8)
+		align: toBytes(1, 8)
+		body: Strings.0
 	}
 
 	TextProg := {
@@ -130,7 +213,7 @@ makeElf := (text, rodata) => (
 
 	` assemble sections and section metadata `
 
-	Sections := [TextSection, RODataSection, StrTabSection]
+	Sections := [NullSection, TextSection, RODataSection, SymTabSection, StrTabSection]
 	offsetSofar := [PageSize]
 	SectionMetas := map(Sections, sec => (
 		meta := {
@@ -141,16 +224,25 @@ makeElf := (text, rodata) => (
 			body: sec.body
 			offset: toBytes(offsetSofar.0, 8)
 			size: toBytes(len(sec.body), 8)
-			link: zeroes(4)
-			info: zeroes(4)
+			link: sec.link :: {
+				() -> zeroes(4)
+				_ -> sec.link
+			}
+			info: sec.info :: {
+				() -> zeroes(4)
+				_ -> sec.info
+			}
 			align: sec.align
-			entsize: zeroes(8)
+			entsize: sec.entsize :: {
+				() -> zeroes(8)
+				_ -> sec.entsize
+			}
 		}
 		offsetSofar.0 := offsetSofar.0 + len(sec.body)
 		meta
 	))
 	SectionBodies := cat(map(SectionMetas, sec => sec.body), '')
-	SectionHeaders := zeroes(64) + cat(map(SectionMetas, sec => (
+	SectionHeaders := cat(map(SectionMetas, sec => (
 		cat([
 			sec.name
 			sec.type
@@ -206,10 +298,10 @@ makeElf := (text, rodata) => (
 		`` SECTION HEADER individual size
 		toBytes(64, 2)
 		`` SECTION HEADER count
-		toBytes(len(Sections) + 1, 2)
+		toBytes(len(Sections), 2)
 
 		`` SECTION TABLE index
-		toBytes(len(SectionMetas), 2)
+		toBytes(len(Sections) - 1, 2)
 	], '')
 
 	` generate binary file `
