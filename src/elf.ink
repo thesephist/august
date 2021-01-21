@@ -85,12 +85,16 @@ PageSize := 4096
 ExecStartAddr := 4198400
 ROStartAddr := 7032832
 
+` takes a map of symbols to their offsets in .text published by asm.assemble
+	and returns a single chunk of data, the ELF64 symbol table. `
 makeSymTab := (symbols, registerString) => (
+	` the symbol table must be ordered by the address order `
 	symbolAddrs := sortBy(map(keys(symbols), sym => {
 		sym: sym
 		addr: symbols.(sym)
 	}), rec => rec.addr)
 
+	` the first entry in the symtab must be a null entry `
 	emptyEntry := {
 		name: toBytes(0, 4)
 		info: toBytes(SymTabInfo.NoType, 1)
@@ -112,7 +116,12 @@ makeSymTab := (symbols, registerString) => (
 	cat(map(entries, ent => ent.name + ent.info + ent.other + ent.shndx + ent.value + ent.size), '')
 )
 
+` main ELF64-generating routine, takes output of asm.assemble and generates
+	an ELF64 executable file `
 makeElf := (text, symbols, rodata) => (
+	` the ELF file contains a "string table" that is byte-indexed and contains
+		section and symbol names in the binary. this is set up here, added to with
+		registerString(), and compiled into the binary in the section .shstrtab `
 	Strings := [char(0)]
 	registerString := name => (
 		idx := len(Strings.0)
@@ -127,6 +136,7 @@ makeElf := (text, symbols, rodata) => (
 	minTextPages := floor(len(text) / PageSize) + 1
 	text := padEndNull(text, PageSize * minTextPages)
 
+	` first section in the section header must be the null section `
 	NullSection := {
 		name: toBytes(0, 4)
 		type: toBytes(SectionType.Null, 4)

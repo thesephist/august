@@ -1,8 +1,15 @@
 # August 🪓
 
-**August** is an assembler written from scratch in [Ink](https://dotink.co/) for me to learn about assemblers, linkers, and compiler backends. It currently supports assembling and linking x86_64 [ELF](https://en.wikipedia.org/wiki/Executable_and_Linkable_Format) binaries, and aims to support ELF executables for ARM, RISC-V, and x86_64 architectures. In the long term, August might also become a code generation backend for a compiler written in Ink for some small subset of C.
+**August** is an assembler written from scratch in [Ink](https://dotink.co/) for me to learn about assemblers, linkers, executable file formats, and compiler backends. It currently supports assembling and linking (in a single step) x86_64 [ELF](https://en.wikipedia.org/wiki/Executable_and_Linkable_Format) binaries for Linux, and might in the future support ELF executables for ARM, RISC-V, and x86 architectures. In the far long term, August might also become a code generation backend for a compiler written in Ink for some small subset of C if I feel adventurous. But for now, August is an educational project that assembles a subset of x86_64 to a Linux ELF binary.
 
-_August is ⚠️ under development ⚠️. Some parts of the system do not work yet._
+August currently supports the following features:
+
+- A good portable subset of the integer x86_64 instruction set
+- Support for arguments as immediates, registers, and labels
+- Embedded read-only data segments
+- Symbol tables for debugging and disassembly
+
+You can see some example assembly code that August can assemble and link under [`test/`](test/).
 
 ## Design
 
@@ -13,20 +20,22 @@ At the moment, the assembler and linker are pretty tightly integrated. The ELF l
 Here's a transcript of a shell session that demonstrates what August can do today. We take a bare-bones Hello World program for Linux on x86_64, assemble it with August, run it, and dump the generated assembly with `objdump`.
 
 ```asm
-$ cat test/asm/004.asm
+$ cat test/asm/004-sym.asm
 ; Hello World
 
-section .text
+section .text   ; implicit
 
-mov eax 0x1     ; write syscall
-mov edi 0x1     ; stdout
-mov esi msg     ; string to print
-mov edx len     ; length
-syscall
+_start:
+    mov eax 0x1     ; write syscall
+    mov edi 0x1     ; stdout
+    mov esi msg     ; string to print
+    mov edx len     ; length
+    syscall
 
-mov eax 60      ; exit syscall
-mov edi 0       ; exit code
-syscall
+exit:
+    mov eax 60      ; exit syscall
+    mov edi 0       ; exit code
+    syscall
 
 section .rodata
 
@@ -58,16 +67,18 @@ $ objdump -d ./hello-world
 
 Disassembly of section .text:
 
-0000000000401000 <.text>:
-  401000:    b8 01 00 00 00           mov    $0x1,%eax
-  401005:    bf 01 00 00 00           mov    $0x1,%edi
-  40100a:    be 00 50 6b 00           mov    $0x6b5000,%esi
-  40100f:    ba 0e 00 00 00           mov    $0xe,%edx
-  401014:    0f 05                    syscall
-  401016:    b8 3c 00 00 00           mov    $0x3c,%eax
-  40101b:    bf 00 00 00 00           mov    $0x0,%edi
-  401020:    0f 05                    syscall
-    ...
+0000000000401000 <_start>:
+  401000:       b8 01 00 00 00          mov    eax,0x1
+  401005:       bf 01 00 00 00          mov    edi,0x1
+  40100a:       be 00 50 6b 00          mov    esi,0x6b5000
+  40100f:       ba 0e 00 00 00          mov    edx,0xe
+  401014:       0f 05                   syscall
+
+0000000000401016 <exit>:
+  401016:       b8 3c 00 00 00          mov    eax,0x3c
+  40101b:       bf 00 00 00 00          mov    edi,0x0
+  401020:       0f 05                   syscall
+        ...
 ```
 
 ### Assembler
@@ -82,7 +93,7 @@ August uses a library for constructing ELF executable files located at [`./src/e
 - `.rodata` containing read-only data loaded into process memory as read-only
 - `.shstrtab` containing section headers
 
-The content of `.text` and `.rodata` sections can be provided to the ELF library, which will return a fully linked ELF binary as the result. I'm planning to add support for a symbol table in the generated binary in the future.
+The content of `.text` and `.rodata` sections can be provided to the ELF library, which will return a fully linked ELF binary as the result. All labels found in the assembly code are treated as local function symbols and placed into the generated symbol table.
 
 ## References and further reading
 
@@ -105,7 +116,7 @@ In writing an x86/x64 assembler, the following were especially helpful to get me
 
 To work on August, you obviously need [Ink](https://dotink.co/) installed. [Inkfmt](https://github.com/thesephist/inkfmt) is also useful for auto-formatting code, which you can run with `make format` or `make f`.
 
-When I work on August (especially the assembler), I usually have two other panes open, running:
+When I work on August (especially the instruction encoder), I usually have two other panes open, running:
 
 - `ls test/asm/*.asm lib/*.ink src/*.ink | entr -cr make` so every file change assembles and runs a program to test
 - `ls ./b.out | entr -cr objdump -d -Mintel ./b.out` so that every time the executable is re-compiled, I can see the disassembly of the executable and check it against the intended assembly code.
